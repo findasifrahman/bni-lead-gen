@@ -145,7 +145,7 @@ async function readCsvCountIfExists(filePath: string): Promise<number> {
 }
 
 async function exportCsvRowsFromPython(csvPath: string): Promise<Array<Record<string, string>>> {
-  const child = spawnPython([env.scraperEntry, "export-csv-rows", "--input", csvPath], {
+  const child = await spawnPython([env.scraperEntry, "export-csv-rows", "--input", csvPath], {
     HEADLESS: resolveHeadlessFlag(true),
   });
   let stdout = "";
@@ -245,8 +245,8 @@ async function persistGeneratedLeadRows(
   return records.length;
 }
 
-function spawnPython(args: string[], overrides: Record<string, string> = {}, cwd = repoPath()): ChildProcessWithoutNullStreams {
-  return spawn(env.pythonBin, args, {
+function spawnPythonCommand(command: string, args: string[], overrides: Record<string, string> = {}, cwd = repoPath()): ChildProcessWithoutNullStreams {
+  return spawn(command, args, {
     cwd,
     windowsHide: true,
     env: {
@@ -256,6 +256,48 @@ function spawnPython(args: string[], overrides: Record<string, string> = {}, cwd
       ...overrides,
     },
   });
+}
+
+async function spawnPython(args: string[], overrides: Record<string, string> = {}, cwd = repoPath()): Promise<ChildProcessWithoutNullStreams> {
+  const candidates = [env.pythonBin, process.env.PYTHON_BIN, "python3", "python"]
+    .map((candidate) => candidate?.trim())
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  const tried = new Set<string>();
+  let lastError: unknown;
+
+  for (const command of candidates) {
+    if (tried.has(command)) {
+      continue;
+    }
+    tried.add(command);
+
+    const child = spawnPythonCommand(command, args, overrides, cwd);
+    const started = await new Promise<{ ok: true; child: ChildProcessWithoutNullStreams } | { ok: false; error: Error }>((resolve) => {
+      const onError = (error: Error) => {
+        child.off("spawn", onSpawn);
+        resolve({ ok: false, error });
+      };
+      const onSpawn = () => {
+        child.off("error", onError);
+        resolve({ ok: true, child });
+      };
+      child.once("error", onError);
+      child.once("spawn", onSpawn);
+    });
+
+    if (started.ok) {
+      return started.child;
+    }
+
+    lastError = started.error;
+    if ((started.error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw started.error;
+    }
+  }
+
+  const fallbackMessage = lastError instanceof Error ? lastError.message : "Unable to locate a Python executable";
+  throw new Error(`Unable to locate Python executable. Tried: ${candidates.join(", ")}. ${fallbackMessage}`);
 }
 
 async function loadScraperCredentials(requestId: string): Promise<ScraperCredentials | null> {
@@ -468,7 +510,7 @@ async function runLeadScrapeJob(job: LeadJob): Promise<void> {
       args.push("--keyword", keyword);
     }
 
-    const child = spawnPython(args, {
+    const child = await spawnPython(args, {
       BNI_USERNAME: username,
       BNI_PASSWORD: password,
       HEADLESS: resolveHeadlessFlag(true),
@@ -696,7 +738,7 @@ export async function estimateLeadGenerationByCredentials(
     args.push("--keyword", keyword);
   }
 
-  const child = spawnPython(args, {
+  const child = await spawnPython(args, {
     BNI_USERNAME: credentials.username,
     BNI_PASSWORD: credentials.password,
     HEADLESS: resolveHeadlessFlag(true),
