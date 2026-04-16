@@ -41,6 +41,19 @@ type AdminUsersResponse = {
   >;
 };
 
+type AdminCreditApplicationsResponse = {
+  items: Array<
+    CreditApplication & {
+      user: PublicUser;
+    }
+  >;
+};
+
+type AdminDashboardResponse = {
+  users: AdminUsersResponse["items"];
+  applications: AdminCreditApplicationsResponse["items"];
+};
+
 type MailCampaignsResponse = {
   items: MailCampaign[];
 };
@@ -453,6 +466,7 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
   const [account, setAccount] = useState<AccountResponse | null>(null);
   const [settings, setSettings] = useState<SettingsResponse["settings"] | null>(null);
   const [adminUsers, setAdminUsers] = useState<AdminUsersResponse["items"]>([]);
+  const [adminCreditApplications, setAdminCreditApplications] = useState<AdminCreditApplicationsResponse["items"]>([]);
   const [loadingTab, setLoadingTab] = useState(false);
 
   const loadSummary = async () => {
@@ -529,8 +543,12 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
   };
 
   const loadAdmin = async () => {
-    const users = await apiRequest<AdminUsersResponse>("/api/admin/users", { token });
+    const [users, applications] = await Promise.all([
+      apiRequest<AdminUsersResponse>("/api/admin/users", { token }),
+      apiRequest<AdminCreditApplicationsResponse>("/api/admin/credit-applications", { token }),
+    ]);
     setAdminUsers(users.items);
+    setAdminCreditApplications(applications.items);
   };
 
   useEffect(() => {
@@ -754,6 +772,7 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
           <AdminTab
             token={token}
             users={adminUsers}
+            applications={adminCreditApplications}
             onRefresh={loadAdmin}
           />
         )}
@@ -1521,19 +1540,71 @@ function SettingsTab({
 function AdminTab({
   token,
   users,
+  applications,
   onRefresh,
 }: {
   token: string;
   users: AdminUsersResponse["items"];
+  applications: AdminCreditApplicationsResponse["items"];
   onRefresh: () => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"USER" | "ADMIN">("USER");
+  const [creditAmounts, setCreditAmounts] = useState<Record<string, string>>({});
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const updateUserCredits = async (userId: string) => {
+    const amount = Number(creditAmounts[userId] ?? "0");
+    if (!Number.isFinite(amount) || amount === 0) {
+      setError("Enter a credit amount to grant or deduct.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    setError("");
+    try {
+      await apiRequest(`/api/admin/users/${userId}/credits`, {
+        method: "PATCH",
+        token,
+        body: JSON.stringify({ amount }),
+      });
+      setMessage("User credits updated.");
+      setCreditAmounts((current) => ({ ...current, [userId]: "" }));
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update credits");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reviewApplication = async (applicationId: string, status: "APPROVED" | "REJECTED") => {
+    setSaving(true);
+    setMessage("");
+    setError("");
+    try {
+      await apiRequest(`/api/admin/credit-applications/${applicationId}`, {
+        method: "PATCH",
+        token,
+        body: JSON.stringify({
+          status,
+          adminNote: reviewNotes[applicationId] ?? "",
+        }),
+      });
+      setMessage(`Application ${status.toLowerCase()}.`);
+      setReviewNotes((current) => ({ ...current, [applicationId]: "" }));
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update application");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const createUser = async (event: FormEvent) => {
     event.preventDefault();
@@ -1585,6 +1656,62 @@ function AdminTab({
         </form>
       </Card>
 
+      <Card title="Credit applications" subtitle="Review pending requests from users." icon="wallet">
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Requested</th>
+                <th>Note</th>
+                <th>Status</th>
+                <th>Admin note</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {applications.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <strong>{item.user.fullName || item.user.email}</strong>
+                    <div className="subtle">{item.user.email}</div>
+                  </td>
+                  <td>{item.requestedCredits}</td>
+                  <td>{item.note || "-"}</td>
+                  <td><Badge tone={item.status === "PENDING" ? "warning" : item.status === "APPROVED" ? "success" : "danger"}>{item.status}</Badge></td>
+                  <td>
+                    <input
+                      className="input"
+                      value={reviewNotes[item.id] ?? item.adminNote ?? ""}
+                      onChange={(event) =>
+                        setReviewNotes((current) => ({
+                          ...current,
+                          [item.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Optional note"
+                    />
+                  </td>
+                  <td className="table-actions">
+                    <Button variant="secondary" disabled={saving || item.status !== "PENDING"} onClick={() => void reviewApplication(item.id, "APPROVED")}>
+                      Approve
+                    </Button>
+                    <Button variant="danger" disabled={saving || item.status !== "PENDING"} onClick={() => void reviewApplication(item.id, "REJECTED")}>
+                      Reject
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+              {!applications.length && (
+                <tr>
+                  <td colSpan={6}>No credit applications yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
       <Card title="User directory" subtitle="Create and review user accounts from one place." icon="leads">
         <div className="table-wrap">
           <table className="data-table">
@@ -1592,7 +1719,9 @@ function AdminTab({
               <tr>
                 <th>User</th>
                 <th>Role</th>
+                <th>Credits</th>
                 <th>Created</th>
+                <th>Grant</th>
               </tr>
             </thead>
             <tbody>
@@ -1603,12 +1732,32 @@ function AdminTab({
                     <div className="subtle">{item.email}</div>
                   </td>
                   <td>{item.role}</td>
+                  <td>{currencyLike(item.creditsAvailable)}</td>
                   <td>{formatDateTime(item.createdAt)}</td>
+                  <td className="table-actions">
+                    <input
+                      className="input"
+                      type="number"
+                      min={-5000}
+                      max={5000}
+                      value={creditAmounts[item.id] ?? ""}
+                      onChange={(event) =>
+                        setCreditAmounts((current) => ({
+                          ...current,
+                          [item.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Amount"
+                    />
+                    <Button disabled={saving} onClick={() => void updateUserCredits(item.id)}>
+                      Apply
+                    </Button>
+                  </td>
                 </tr>
               ))}
               {!users.length && (
                 <tr>
-                  <td colSpan={3}>No users found.</td>
+                  <td colSpan={5}>No users found.</td>
                 </tr>
               )}
             </tbody>
