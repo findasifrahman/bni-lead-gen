@@ -374,12 +374,13 @@ function ComboBox({
   hint?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(true);
   const filtered = useMemo(() => {
     const normalized = normalizeReferenceItems(options);
     const query = value.trim().toLowerCase();
-    if (!query) return normalized;
+    if (showAll || !query) return normalized;
     return normalized.filter((item) => item.label.toLowerCase().includes(query));
-  }, [options, value]);
+  }, [options, value, showAll]);
 
   return (
     <label className={`field combo-field ${open ? "combo-open" : ""}`}>
@@ -388,8 +389,14 @@ function ComboBox({
         <input
           value={value}
           placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            setShowAll(false);
+            onChange(event.target.value);
+          }}
+          onFocus={() => {
+            setOpen(true);
+            setShowAll(true);
+          }}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           className="input"
           autoComplete="off"
@@ -404,6 +411,7 @@ function ComboBox({
                 className="combo-item"
                 onMouseDown={(event) => {
                   event.preventDefault();
+                  setShowAll(true);
                   onChange(item.value ?? item.label);
                   setOpen(false);
                 }}
@@ -834,6 +842,7 @@ function HomeTab({
   const isCompleted = Boolean(visibleRequest && visibleRequest.status === "COMPLETED");
   const creditsLabel = isCompleted ? "Credits charged" : "Maximum reserved";
   const creditsValue = visibleRequest?.requiredCredits ?? preflight?.requiredCredits ?? null;
+  const isFiltering = preflightLoading || submitting;
 
   useEffect(() => {
     if (!visibleRequest) {
@@ -981,10 +990,14 @@ function HomeTab({
 
         <div className="action-row">
           <Button variant="secondary" disabled={isRunning || preflightLoading || submitting} onClick={runPreflight}>
-            <Icon name="filter" /> Filter
+            {isFiltering ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="filter" />}{" "}
+            {preflightLoading ? "Filtering..." : "Filter"}
           </Button>
           <Button variant="danger" disabled={!canCancel || submitting || preflightLoading} onClick={cancelRequest}>
             <Icon name="close" /> Cancel
+          </Button>
+          <Button variant="ghost" disabled={isFiltering} onClick={() => void onReload()}>
+            <Icon name="clock" /> Reload
           </Button>
         </div>
 
