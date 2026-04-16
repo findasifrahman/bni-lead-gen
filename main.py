@@ -7,12 +7,27 @@ import json
 from pathlib import Path
 import sys
 
-from src.category_discovery import run_category_discovery
-from src.config import load_settings
-from src.logger import setup_logging
-from src.member_indexer import run_index_category
-from src.merge import merge_country_profiles
-from src.profile_scraper import run_scrape_category, run_test_profile
+try:
+    from src.category_discovery import run_category_discovery
+    from src.config import load_settings
+    from src.logger import setup_logging
+    from src.member_indexer import run_index_category
+    from src.merge import merge_country_profiles
+    from src.profile_scraper import run_scrape_category, run_test_profile
+except ModuleNotFoundError as exc:
+    if exc.name == "playwright" or (exc.name and exc.name.startswith("playwright")):
+        sys.stderr.write(
+            "Missing Python dependency: playwright.\n"
+            "Install the scraper environment with:\n"
+            "  python3 -m venv .venv\n"
+            "  . .venv/bin/activate\n"
+            "  pip install -r requirements.txt\n"
+            "  python -m playwright install chromium\n"
+            "Then point PYTHON_BIN to the virtualenv python, for example:\n"
+            "  PYTHON_BIN=/opt/bni-lead-gen/.venv/bin/python\n"
+        )
+        raise SystemExit(1) from exc
+    raise
 
 ZERO_WIDTH_CHARS = {
     "\u200b",

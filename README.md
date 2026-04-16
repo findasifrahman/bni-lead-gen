@@ -159,11 +159,17 @@ SSH into the VPS and install:
 - Chromium dependencies for Playwright
 - Git
 
-Also make sure Playwright Chromium is installed on the server:
+Create a dedicated Python virtualenv for the scraper and install its dependencies:
 
 ```bash
+cd /opt/bni-lead-gen
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
 python -m playwright install chromium
 ```
+
+If you prefer not to use a virtualenv, install the Python packages into your system Python and make sure `PYTHON_BIN` points to that interpreter.
 
 ### 3. Clone the repo
 
@@ -188,7 +194,7 @@ JWT_SECRET=use-a-long-random-secret
 APP_ENCRYPTION_KEY=use-a-32-byte-base64-or-similar-secret
 WEB_ORIGIN=http://YOUR_VPS_IP:4000
 API_PORT=4000
-PYTHON_BIN=python3
+PYTHON_BIN=/opt/bni-lead-gen/.venv/bin/python
 SCRAPER_ENTRY=main.py
 HEADLESS=true
 
