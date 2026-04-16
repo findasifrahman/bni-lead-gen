@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const API_URL = import.meta.env.VITE_API_URL
+  || (import.meta.env.DEV
+    ? "http://localhost:4000"
+    : window.location.origin);
 
 type RequestOptions = RequestInit & {
   token?: string | null;
