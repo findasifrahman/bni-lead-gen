@@ -47,8 +47,8 @@ Important variables:
 DATABASE_URL=postgresql://...
 JWT_SECRET=change-me
 APP_ENCRYPTION_KEY=change-me-too
-WEB_ORIGIN=http://localhost:4001
-API_PORT=4001
+WEB_ORIGIN=http://localhost:4000
+API_PORT=4000
 PYTHON_BIN=python
 SCRAPER_ENTRY=main.py
 HEADLESS=true
@@ -126,14 +126,22 @@ Seeded admin:
 
 ## Production Deployment
 
+This project is a single git repository with both backend and frontend in it.
+For production, you deploy one Node process on the VPS. That Node process serves:
+
+- the API
+- the built frontend from `apps/web/dist`
+
+So there is no separate frontend server in production.
+
 This guide assumes:
 
 - VPS: DWHOST
 - Database: Railway Postgres
-- Deployment over SSH from GitHub Actions
 - Port 80 is already occupied
+- You will deploy by SSH or GitHub Actions
 
-The production app runs as a single Node service on a custom port, for example `4001`. The API serves the frontend build, so you do not need a separate frontend process.
+Use one custom port, for example `4000` or `4001`.
 
 ### 1. Create Railway Postgres
 
@@ -166,7 +174,7 @@ cd /opt/bni-lead-gen
 
 ### 4. Create the server `.env`
 
-Create the root `.env` file on the VPS:
+Create the root `.env` file on the VPS. This file stays only on the server and must not be committed to git:
 
 ```bash
 nano /opt/bni-lead-gen/.env
@@ -178,8 +186,8 @@ Example production values:
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/railwaydb?schema=public
 JWT_SECRET=use-a-long-random-secret
 APP_ENCRYPTION_KEY=use-a-32-byte-base64-or-similar-secret
-WEB_ORIGIN=http://YOUR_VPS_IP:4001
-API_PORT=4001
+WEB_ORIGIN=http://YOUR_VPS_IP:4000
+API_PORT=4000
 PYTHON_BIN=python3
 SCRAPER_ENTRY=main.py
 HEADLESS=true
@@ -335,12 +343,20 @@ Store these as GitHub repo secrets:
 
 ## Port and Access
 
-If port 80 is already used, run the app on another port such as `4001`.
+If port 80 is already used, run the app on another port such as `4000` or `4001`.
 
-- `API_PORT=4001`
-- `WEB_ORIGIN=http://YOUR_VPS_IP:4001`
+- `API_PORT=4000`
+- `WEB_ORIGIN=http://YOUR_VPS_IP:4000`
 
-The frontend is served from the same Node process, so there is no separate frontend port in production unless you choose to place nginx or another proxy in front of it.
+There is no separate frontend port in the default production setup because the API serves the built frontend.
+
+### About `VITE_API_URL`
+
+You do not need to set `VITE_API_URL` for the normal VPS deployment described above.
+
+- In local development, the frontend uses `http://localhost:4000`.
+- In production, the frontend uses the same origin as the browser URL.
+- Only set `VITE_API_URL` if you deliberately split the frontend and backend onto different origins.
 
 ## Troubleshooting
 
@@ -350,3 +366,35 @@ The frontend is served from the same Node process, so there is no separate front
 - If emails do not send, verify `sending_email` and `app_password` are set in the user settings
 - Never commit `.env`; keep secrets only on the VPS and in GitHub Secrets
 
+## Exact VPS Run Order
+
+If you want the shortest possible checklist, do this on the VPS:
+
+```bash
+cd /opt/bni-lead-gen
+npm install
+npm run prisma:generate
+npm run build
+npm run migrate:deploy
+node apps/api/dist/server.js
+```
+
+If this is the first deployment, also run:
+
+```bash
+npm run seed
+```
+
+Then open:
+
+```text
+http://97.64.27.223:4000
+```
+
+If the browser shows a blank page, first confirm:
+
+1. `apps/web/dist/index.html` exists
+2. `node apps/api/dist/server.js` is running
+3. your VPS firewall allows the chosen port
+4. `WEB_ORIGIN` matches the URL you are using in the browser
+5. you rebuilt after changing the server or web source files
