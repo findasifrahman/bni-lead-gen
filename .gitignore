@@ -1,0 +1,46 @@
+# Secrets
+.env
+.env.local
+.env.production
+.env.production.local
+**/.env
+**/.env.local
+**/.env.production
+**/.env.production.local
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+build/
+**/build/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# App/runtime artifacts
+output/
+debug/
+playwright-report/
+test-results/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

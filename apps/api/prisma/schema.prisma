@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum LeadRequestStatus {
+  QUEUED
+  COUNTING
+  AWAITING_APPROVAL
+  RUNNING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum MailCampaignStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum MailRecipientStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum MailCampaignSourceType {
+  GENERATED_LEADS
+  CUSTOM_UPLOAD
+  COMBINED
+}
+
+enum MailCampaignChatRole {
+  USER
+  ASSISTANT
+}
+
+enum CreditApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PasswordResetStatus {
+  PENDING
+  USED
+  EXPIRED
+}
+
+model User {
+  id                     String              @id @default(cuid())
+  email                  String              @unique
+  fullName               String?
+  passwordHash           String
+  role                   UserRole            @default(USER)
+  creditsBalance         Int                 @default(0)
+  creditsReserved        Int                 @default(0)
+  currentLeadRequestId   String?
+  currentMailCampaignId  String?
+  bniUsername            String?
+  bniPasswordEncrypted   String?
+  sendingEmailEncrypted  String?
+  sendingAppPasswordEncrypted String?
+  maxProfileConcurrency  Int                 @default(1)
+  maxCountryProfiles     Int                 @default(360)
+  requestDelayMin        Float               @default(3.5)
+  requestDelayMax        Float               @default(6.5)
+  headless               Boolean             @default(true)
+  failedLoginCount       Int                 @default(0)
+  lockedUntil            DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  leadRequests           LeadRequest[]
+  generatedLeadRows      GeneratedLeadRow[]
+  mailCampaigns          MailCampaign[]
+  mailRecipients         MailRecipient[]
+  mailCampaignChatMessages MailCampaignChatMessage[]
+  mailResearchCaches     MailResearchCache[]
+  creditApplications     CreditApplication[]
+  passwordResetTokens    PasswordResetToken[]
+}
+
+model MailResearchCache {
+  id            String   @id @default(cuid())
+  userId        String
+  fingerprint   String
+  inputJson     Json
+  summary       String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fingerprint])
+  @@index([userId, createdAt])
+}
+
+model BniScrapeLock {
+  id                  String   @id @default(cuid())
+  normalizedUsername  String   @unique
+  displayUsername     String
+  requestId           String   @unique
+  userId              String
+  acquiredAt          DateTime @default(now())
+  expiresAt           DateTime
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LeadRequest {
+  id                String            @id @default(cuid())
+  userId            String
+  keyword           String?
+  country           String
+  category          String?
+  filename          String
+  totalLeads        Int               @default(0)
+  requiredCredits   Int               @default(0)
+  estimatedMinutes  Int               @default(0)
+  uuidCsvPath       String?
+  csvPath           String?
+  r2Prefix          String?
+  r2CsvKey          String?
+  r2CsvUrl          String?
+  status            LeadRequestStatus @default(COUNTING)
+  cancelReason      String?
+  errorMessage      String?
+  requestedAt       DateTime          @default(now())
+  countCompletedAt  DateTime?
+  approvedAt        DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generatedLeadRows GeneratedLeadRow[]
+
+  @@index([userId, requestedAt])
+  @@index([status])
+  @@index([filename])
+}
+
+model GeneratedLeadRow {
+  id                String   @id @default(cuid())
+  leadRequestId     String
+  userId            String
+  rowIndex          Int
+  profileUrl        String
+  name              String?
+  company           String?
+  email             String?
+  phone1            String?
+  phone2            String?
+  website           String?
+  city              String?
+  country           String?
+  chapter           String?
+  professionalDetails String?
+  searchCountry     String
+  searchCategory    String?
+  searchKeyword     String?
+  rawData           Json
+  createdAt         DateTime @default(now())
+
+  leadRequest       LeadRequest @relation(fields: [leadRequestId], references: [id], onDelete: Cascade)
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([leadRequestId, rowIndex])
+  @@index([userId, createdAt])
+  @@index([leadRequestId])
+  @@index([searchCountry, searchCategory, searchKeyword])
+}
+
+model MailCampaign {
+  id                 String                @id @default(cuid())
+  userId             String
+  sourceType         MailCampaignSourceType
+  leadRequestId      String?
+  inputFileName      String?
+  inputFileKey       String?
+  inputFileUrl       String?
+  companyWebsitePrimary   String
+  companyWebsiteSecondary String
+  companyWebsiteTertiary  String?
+  socialLinkedIn     String?
+  socialInstagram    String?
+  socialFacebook     String?
+  phoneNumber        String?
+  customInstructions String?
+  serviceSummary     String?
+  draftSubject       String?
+  draftBody          String?
+  totalRecipients    Int                   @default(0)
+  creditsReserved    Int                   @default(0)
+  creditsCharged     Int                   @default(0)
+  sentCount          Int                   @default(0)
+  failedCount        Int                   @default(0)
+  status             MailCampaignStatus    @default(DRAFT)
+  errorMessage       String?
+  requestedAt        DateTime              @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipients         MailRecipient[]
+  messages           MailCampaignChatMessage[]
+
+  @@index([userId, requestedAt])
+  @@index([status])
+  @@index([leadRequestId])
+}
+
+model MailRecipient {
+  id                 String              @id @default(cuid())
+  campaignId         String
+  userId             String
+  rowIndex           Int
+  name               String
+  company            String?
+  email              String
+  website            String?
+  city               String?
+  country            String?
+  professionalDetails String?
+  sourceType         MailCampaignSourceType
+  status             MailRecipientStatus @default(PENDING)
+  emailSubject       String?
+  emailBody          String?
+  lastError          String?
+  sentAt             DateTime?
+  rawData            Json?
+  createdAt          DateTime            @default(now())
+
+  campaign           MailCampaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, rowIndex])
+  @@index([userId, createdAt])
+  @@index([campaignId, status])
+}
+
+model MailCampaignChatMessage {
+  id           String               @id @default(cuid())
+  campaignId   String
+  userId       String
+  role         MailCampaignChatRole
+  content      String
+  draftSubject String?
+  draftBody    String?
+  createdAt    DateTime             @default(now())
+
+  campaign     MailCampaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model CreditApplication {
+  id              String                 @id @default(cuid())
+  userId          String
+  requestedCredits Int
+  note            String?
+  status          CreditApplicationStatus @default(PENDING)
+  adminId         String?
+  adminNote       String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([userId, createdAt])
+}
+
+model PasswordResetToken {
+  id         String             @id @default(cuid())
+  userId     String
+  token      String             @unique
+  status     PasswordResetStatus @default(PENDING)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime           @default(now())
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
