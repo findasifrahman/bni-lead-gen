@@ -69,5 +69,13 @@ jobs:
           npm run prisma:generate
           npm run build
           npm run migrate:deploy
-          sudo systemctl restart bni-lead-gen
+          if command -v pm2 >/dev/null 2>&1; then
+            pm2 restart bni-lead-gen || pm2 start apps/api/dist/server.js --name bni-lead-gen
+            pm2 save
+          elif command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl restart bni-lead-gen
+          else
+            echo "Neither pm2 nor systemctl is available on the VPS."
+            exit 1
+          fi
           REMOTE

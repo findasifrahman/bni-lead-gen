@@ -369,6 +369,9 @@ ssh-keygen -lf /root/.ssh/id_ed25519.pub
 
 The fingerprint printed by GitHub Actions from the deploy workflow must match this value.
 
+If you use PM2 on the VPS, the deploy workflow will restart `bni-lead-gen` with PM2.
+If you use `systemd` instead, keep a service named `bni-lead-gen` active on the VPS.
+
 The secret value should start with:
 
 ```text
