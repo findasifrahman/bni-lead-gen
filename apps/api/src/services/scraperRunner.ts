@@ -79,6 +79,89 @@ function resolveSearchBucket(country: string, category: string, keyword: string)
   return path.join(...parts);
 }
 
+function scoreLeadOutputCandidate(expectedBucket: string, candidatePath: string): number {
+  const normalizedExpected = expectedBucket.split(path.sep).filter(Boolean).join("/");
+  const normalizedCandidate = candidatePath.split(path.sep).filter(Boolean).join("/");
+  const expectedParts = normalizedExpected.split("/");
+  const candidateParts = normalizedCandidate.split("/");
+  let score = 0;
+
+  for (let index = 0; index < Math.min(expectedParts.length, candidateParts.length); index += 1) {
+    if (expectedParts[index] !== candidateParts[index]) break;
+    score += 10;
+  }
+
+  if (normalizedCandidate.endsWith(normalizedExpected)) {
+    score += 25;
+  }
+
+  if (normalizedCandidate.includes(normalizedExpected)) {
+    score += 10;
+  }
+
+  if (normalizedCandidate.endsWith("/profiles.csv")) {
+    score += 1;
+  }
+
+  return score;
+}
+
+async function resolveLeadProfilesCsvPath(country: string, category: string, keyword: string): Promise<string> {
+  const expectedBucket = resolveSearchBucket(country, category, keyword);
+  const expectedPath = repoPath("output", expectedBucket, "profiles.csv");
+  try {
+    await fs.access(expectedPath);
+    return expectedPath;
+  } catch {
+    // fall through to discovery below
+  }
+
+  const countryRoot = repoPath("output", slugify(country));
+  let discovered: string[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    let entries: Array<import("fs").Dirent>;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name === "profiles.csv") {
+        discovered.push(entryPath);
+      }
+    }
+  }
+
+  await walk(countryRoot);
+  if (!discovered.length) {
+    return expectedPath;
+  }
+
+  discovered.sort((a, b) => {
+    const scoreA = scoreLeadOutputCandidate(expectedBucket, path.relative(countryRoot, a));
+    const scoreB = scoreLeadOutputCandidate(expectedBucket, path.relative(countryRoot, b));
+    if (scoreA !== scoreB) return scoreB - scoreA;
+    return a.localeCompare(b);
+  });
+
+  const resolved = discovered[0];
+  if (resolved !== expectedPath) {
+    console.info(
+      "Resolved lead CSV path via fallback: expected=%s resolved=%s",
+      expectedPath,
+      resolved
+    );
+    void appendApiDebug(`lead csv fallback | expected=${expectedPath} | resolved=${resolved}`);
+  }
+  return resolved;
+}
+
 function resolveHeadlessFlag(fallback: boolean): string {
   const configured = process.env.HEADLESS?.trim();
   if (configured) {
@@ -597,8 +680,8 @@ async function runLeadScrapeJob(job: LeadJob): Promise<void> {
     let csvPath = "";
     let prefix = "";
     try {
-      csvPath = repoPath("output", resolveSearchBucket(country, category, keyword), "profiles.csv");
-      const indexPath = repoPath("output", resolveSearchBucket(country, category, keyword), "members_index.csv");
+      csvPath = await resolveLeadProfilesCsvPath(country, category, keyword);
+      const indexPath = path.join(path.dirname(csvPath), "members_index.csv");
       const request = await prisma.leadRequest.findUnique({ where: { id: requestId }, include: { user: true } });
       if (!request) {
         throw new Error("Lead request not found");
