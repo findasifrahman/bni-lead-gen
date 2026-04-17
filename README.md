@@ -345,7 +345,7 @@ Store these as GitHub repo secrets:
 
 - `VPS_HOST`: the public IP or domain name of your VPS
 - `VPS_USER`: the SSH username on the VPS, often `root` or a deploy user
-- `VPS_SSH_KEY`: the private SSH key that GitHub Actions uses to connect to the VPS (private key at VPS_SSH_KEY)
+- `VPS_SSH_KEY`: the **contents of the private key file**, not the file path
 
 To create `VPS_SSH_KEY`, generate a key pair on your local machine:
 
@@ -356,7 +356,13 @@ ssh-keygen -t ed25519 -C "github-actions-deploy"
 Then:
 
 - add the **public** key to `/root/.ssh/authorized_keys` or the deploy user's `~/.ssh/authorized_keys` on the VPS
-- copy the **private** key contents into the GitHub secret `VPS_SSH_KEY`
+- copy the **private** key file contents from `/root/.ssh/id_ed25519` into the GitHub secret `VPS_SSH_KEY`
+
+The secret value should start with:
+
+```text
+-----BEGIN OPENSSH PRIVATE KEY-----
+```
 
 If your VPS uses a non-default SSH port, add `VPS_PORT` as another GitHub secret.
 

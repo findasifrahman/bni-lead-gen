@@ -56,6 +56,7 @@ const leadRequestSchema = z.object({
   keyword: z.string().trim().optional().default(""),
   country: z.string().trim().min(2),
   category: z.string().trim().optional().default(""),
+  estimatedRequiredCredits: z.number().int().positive().optional(),
 });
 
 const applyCreditSchema = z.object({
@@ -822,7 +823,11 @@ export function createApp() {
     }
 
     const keywordForLead = parsed.data.keyword.trim();
-    const estimatedRequiredCredits = Math.max(1, Math.ceil(user.maxCountryProfiles / 2));
+    const estimatedRequiredCredits = parsed.data.estimatedRequiredCredits;
+    if (!estimatedRequiredCredits) {
+      res.status(400).json({ message: "Run Filter first to get a credit estimate." });
+      return;
+    }
     const creditsAvailable = Math.max(user.creditsBalance - user.creditsReserved, 0);
     if (creditsAvailable < estimatedRequiredCredits) {
       res.status(409).json({

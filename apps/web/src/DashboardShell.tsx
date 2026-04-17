@@ -900,7 +900,10 @@ function HomeTab({
       const result = await apiRequest<{ item: LeadRequest; message: string }>("/api/lead-requests", {
         method: "POST",
         token,
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          estimatedRequiredCredits: preflight.requiredCredits,
+        }),
       });
       setMessage(result.message);
       setPreflight(null);
