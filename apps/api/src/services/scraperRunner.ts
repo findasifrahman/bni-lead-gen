@@ -538,7 +538,7 @@ async function runLeadScrapeJob(job: LeadJob): Promise<void> {
         where: { id: requestId },
         data: {
           totalLeads,
-          estimatedMinutes: Math.max(1, Math.ceil(totalLeads / 50)),
+          estimatedMinutes: Math.max(1, Math.ceil(totalLeads * 0.42)),
         },
       });
     };
@@ -773,7 +773,7 @@ export async function estimateLeadGenerationByCredentials(
   return {
     totalLeads,
     requiredCredits: Math.max(1, Math.ceil(totalLeads / 2)),
-    estimatedMinutes: Math.max(1, Math.ceil(totalLeads / 50)),
+    estimatedMinutes: Math.max(1, Math.ceil(totalLeads * 0.42)),
   };
 }
 

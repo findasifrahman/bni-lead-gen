@@ -787,8 +787,8 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
 
         <footer className="footer">
           <div className="footer-brand">
-            <strong>Logo placeholder</strong>
-            <p>Replace this block with your production brand mark.</p>
+            <strong>BNI Lead Gen</strong>
+            <p>Creating lead with precision.</p>
           </div>
           <div className="footer-links">
             <a href="#">Website</a>
@@ -796,8 +796,8 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             <a href="#">Support</a>
           </div>
           <div className="footer-meta">
-            <p>Developer info: add your company contact here.</p>
-            <p>Contact: support@malishagroup.com</p>
+            <p>Developer info: asifrahman.</p>
+            <p>Contact: info@malishagroup.com</p>
           </div>
         </footer>
       </main>

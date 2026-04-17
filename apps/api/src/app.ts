@@ -148,7 +148,7 @@ function toPublicUser(user: {
 }
 
 function estimateMinutes(totalLeads: number): number {
-  return Math.max(1, Math.ceil(totalLeads / 50));
+  return Math.max(1, Math.ceil(totalLeads * 0.42));
 }
 
 async function appendApiDebug(message: string): Promise<void> {
@@ -867,7 +867,7 @@ export function createApp() {
             filename,
             totalLeads: 0,
             requiredCredits: estimatedRequiredCredits,
-            estimatedMinutes: Math.max(1, Math.ceil(user.maxCountryProfiles / 50)),
+            estimatedMinutes: Math.max(1, Math.ceil(user.maxCountryProfiles * 0.42)),
             status: "QUEUED",
           },
         });
