@@ -227,6 +227,15 @@ async function readCsvCountIfExists(filePath: string): Promise<number> {
   }
 }
 
+async function ensureFileExists(filePath: string): Promise<void> {
+  try {
+    await fs.access(filePath);
+  } catch {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "", "utf8");
+  }
+}
+
 async function exportCsvRowsFromPython(csvPath: string): Promise<Array<Record<string, string>>> {
   const child = await spawnPython([env.scraperEntry, "export-csv-rows", "--input", csvPath], {
     HEADLESS: resolveHeadlessFlag(true),
@@ -681,6 +690,7 @@ async function runLeadScrapeJob(job: LeadJob): Promise<void> {
     let prefix = "";
     try {
       csvPath = await resolveLeadProfilesCsvPath(country, category, keyword);
+      await ensureFileExists(csvPath);
       const indexPath = path.join(path.dirname(csvPath), "members_index.csv");
       const request = await prisma.leadRequest.findUnique({ where: { id: requestId }, include: { user: true } });
       if (!request) {

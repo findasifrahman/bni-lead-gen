@@ -581,10 +581,16 @@ async def run_scrape_category(
                 except Error:
                     break
 
-        try:
-            await page.close()
-        except Error:
-            pass
+    try:
+        await page.close()
+    except Error:
+        pass
+
+    profiles_csv.parent.mkdir(parents=True, exist_ok=True)
+    if not profiles_csv.exists():
+        profiles_csv.write_text("", encoding="utf-8")
+    if not profiles_jsonl.exists():
+        profiles_jsonl.write_text("", encoding="utf-8")
 
     logger.info("Completed category scrape export at %s", profiles_csv)
     return profiles_csv

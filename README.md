@@ -300,7 +300,8 @@ If you do not want `systemd`, PM2 also works:
 npx pm2 start apps/api/dist/server.js --name bni-lead-gen
 npx pm2 save
 ```
-we used pm2 and pm2 command uses "npx pm2 list"
+we used pm2 and pm2 command uses "npx pm2 list , npx pm2 restart bni-lead-gen , npx pm2 logs --lines 50"
+
 
 ## GitHub CI/CD
 
