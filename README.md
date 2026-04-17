@@ -358,6 +358,8 @@ Then:
 
 - add the **public** key to `/root/.ssh/authorized_keys` or the deploy user's `~/.ssh/authorized_keys` on the VPS
 - copy the **private** key file contents from `/root/.ssh/id_ed25519` into the GitHub secret `VPS_SSH_KEY`
+- make sure `VPS_USER` is the same user that owns that `authorized_keys` entry
+- if `VPS_USER=root`, confirm your VPS allows root SSH login
 
 The secret value should start with:
 

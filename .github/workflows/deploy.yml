@@ -8,20 +8,65 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      VPS_SSH_PASSPHRASE: ${{ secrets.VPS_SSH_PASSPHRASE }}
     steps:
+      - name: Prepare SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VPS_HOST:-}" ] || [ -z "${VPS_USER:-}" ] || [ -z "${VPS_SSH_KEY:-}" ]; then
+            echo "::error::Missing one or more required secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/bni_deploy_key
+          chmod 600 ~/.ssh/bni_deploy_key
+
+          if head -n 1 ~/.ssh/bni_deploy_key | grep -q '^/'; then
+            echo "::error::VPS_SSH_KEY looks like a file path. Paste the private key contents, not the path."
+            exit 1
+          fi
+
+          if ! grep -q 'BEGIN OPENSSH PRIVATE KEY' ~/.ssh/bni_deploy_key && ! grep -q 'BEGIN RSA PRIVATE KEY' ~/.ssh/bni_deploy_key; then
+            echo "::error::VPS_SSH_KEY does not look like a private key. Paste the full private key block from the file."
+            exit 1
+          fi
+
+          if [ -n "${VPS_SSH_PASSPHRASE:-}" ]; then
+            ssh-keygen -p -P "$VPS_SSH_PASSPHRASE" -N "" -f ~/.ssh/bni_deploy_key -q
+          fi
+
+          ssh-keygen -y -f ~/.ssh/bni_deploy_key >/dev/null
+
+      - name: Test SSH connection
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! ssh -i ~/.ssh/bni_deploy_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST" 'echo SSH connection ok'; then
+            echo "::error::SSH authentication failed. Check that:"
+            echo "::error::1) VPS_USER is the correct SSH account on the VPS"
+            echo "::error::2) the public key for this private key exists in ~/.ssh/authorized_keys for that user"
+            echo "::error::3) root login is allowed if VPS_USER=root"
+            echo "::error::4) the private key secret matches the public key installed on the VPS"
+            exit 1
+          fi
+
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          script: |
-            set -e
-            cd /opt/bni-lead-gen
-            git pull origin main
-            npm install
-            npm run prisma:generate
-            npm run build
-            npm run migrate:deploy
-            sudo systemctl restart bni-lead-gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/bni_deploy_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /opt/bni-lead-gen
+          git pull origin main
+          npm install
+          npm run prisma:generate
+          npm run build
+          npm run migrate:deploy
+          sudo systemctl restart bni-lead-gen
+          REMOTE

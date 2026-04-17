@@ -338,7 +338,7 @@ function LoginScreen({
             <span className="brand-dot" />
             <span>BNI Lead Gen</span>
           </div>
-          <h3>Premium lead generation for your organization.</h3>
+          <h2>Premium lead generation platform.</h2>
           <p>Secure login, password reset, credit billing, and organized CSV output in one polished dashboard.</p>
           <div className="brand-badges">
             <span>AI generated email with simple interface</span>
