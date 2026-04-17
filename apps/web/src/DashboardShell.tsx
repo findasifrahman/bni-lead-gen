@@ -987,7 +987,7 @@ function HomeTab({
             onChange={(value) => setForm((prev) => ({ ...prev, category: value }))}
             options={categoryOptions}
             placeholder="Select or type a category"
-            hint="Matches the BNI Connect category list."
+            hint={`Matches the BNI Connect category list. ${categoryOptions.length ? `${categoryOptions.length} loaded.` : "Loading categories..."}`}
           />
         </div>
 
