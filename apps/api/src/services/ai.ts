@@ -332,6 +332,7 @@ async function callOpenAiResponsesJson<T>(input: {
 export async function draftPersonalizedMail(input: {
   senderCompanySummary: string;
   senderEmail: string;
+  customInstructions?: string;
   recipient: {
     name: string;
     company?: string | null;
@@ -364,16 +365,20 @@ export async function draftPersonalizedMail(input: {
   const prompt = {
     senderCompanySummary: input.senderCompanySummary,
     senderEmail: input.senderEmail,
+    senderNotes: input.customInstructions ?? "",
     recipient: input.recipient,
     currentDraft: input.currentDraft ?? null,
     chatInstruction: input.chatInstruction ?? "",
     rules: [
       "Write one highly personalized B2B outreach email for this exact recipient.",
       "Use at least two concrete facts from the sender company summary.",
+      "Treat senderNotes as high-priority instructions. If they mention role, origin, relationship, brand names, or tone, reflect them in the email naturally.",
       "Reference the recipient company, role, city, country, website, or professional details when relevant.",
       "If there are multiple possible services, choose the one most relevant to the recipient and explain why.",
       "Make the message sound like a real business development note, not a template.",
       "Avoid spammy words and hype such as free, guarantee, urgent, limited time, discount, no risk, act now, and similar phrases.",
+      "If the sender notes mention a BNI relationship, fellow member relationship, or the sender's name/title, include that context once in a natural, non-forced way.",
+      "Do not append internal research bullets or explanations after the sign-off.",
       "Keep the subject short and specific.",
       "Return only JSON with subject and body.",
     ],
@@ -384,7 +389,7 @@ export async function draftPersonalizedMail(input: {
       const parsed = await callOpenAiResponsesJson<DraftMailResult>({
         model: env.openaiModelName.trim() || "gpt-5.4-nano",
         instructions:
-          "You write highly personalized, respectful cold outreach emails. Be specific and concrete. Use the research summary and recipient context to create a compelling, human-sounding message. Return only valid JSON with keys subject and body.",
+          "You write highly personalized, respectful cold outreach emails. Be specific and concrete. Use the research summary, sender notes, and recipient context to create a compelling, human-sounding message. Treat sender notes as important requirements, especially relationship context, sender identity, and tone. Return only valid JSON with keys subject and body.",
         payload: prompt,
         schemaName: "mail_draft",
         schema: {
@@ -413,7 +418,7 @@ export async function draftPersonalizedMail(input: {
     {
       role: "system",
       content:
-        "You write highly personalized, respectful cold outreach emails. Use the researched business summary, website signals, and any draft context to mention concrete services, capabilities, or differentiators. Do not be generic. Avoid spammy wording, hype, or promises. Keep the message professional, specific, and concise. Output JSON only with keys subject and body. The body must be plain text with paragraph breaks and should feel like a human wrote it for this specific recipient.",
+        "You write highly personalized, respectful cold outreach emails. Use the researched business summary, sender notes, website signals, and any draft context to mention concrete services, capabilities, relationship context, and differentiators. Do not be generic. Avoid spammy wording, hype, or promises. If the sender notes mention a BNI relationship, fellow member relationship, sender name/title, or preferred tone, include that naturally and faithfully. Do not append internal research bullets or explanations after the sign-off. Keep the message professional, specific, and concise. Output JSON only with keys subject and body. The body must be plain text with paragraph breaks and should feel like a human wrote it for this specific recipient.",
     },
     {
       role: "user",
@@ -435,6 +440,7 @@ export async function draftPersonalizedMail(input: {
 export async function reviseCampaignDraft(input: {
   senderCompanySummary: string;
   senderEmail: string;
+  customInstructions?: string;
   recipient: {
     name: string;
     company?: string | null;
@@ -451,6 +457,7 @@ export async function reviseCampaignDraft(input: {
   const base = input.currentDraft ?? (await draftPersonalizedMail({
     senderCompanySummary: input.senderCompanySummary,
     senderEmail: input.senderEmail,
+    customInstructions: input.customInstructions,
     recipient: input.recipient,
   }));
 
@@ -465,7 +472,7 @@ export async function reviseCampaignDraft(input: {
     {
       role: "system",
       content:
-        "You are editing a high-conversion B2B outreach email. Keep it personal, specific, and concise. Use the researched company summary and previous chat context. Preserve useful facts, avoid spam language, and return JSON only with keys subject and body. The body must remain plain text with paragraph breaks.",
+        "You are editing a high-conversion B2B outreach email. Keep it personal, specific, and concise. Use the researched company summary, sender notes, and previous chat context. Preserve useful facts, avoid spam language, and return JSON only with keys subject and body. If the user asks to mention or remove a specific business relationship, sender identity, tone, or service, apply it faithfully. The body must remain plain text with paragraph breaks.",
     },
     {
       role: "user",
@@ -473,6 +480,7 @@ export async function reviseCampaignDraft(input: {
         {
           senderCompanySummary: input.senderCompanySummary,
           senderEmail: input.senderEmail,
+          senderNotes: input.customInstructions ?? "",
           recipient: input.recipient,
           currentDraft: base,
           userInstruction: input.userInstruction,

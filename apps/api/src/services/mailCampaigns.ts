@@ -546,6 +546,7 @@ export async function createMailCampaignDraft(input: MailDraftInput): Promise<{
       ? await draftPersonalizedMail({
           senderCompanySummary: serviceSummary,
           senderEmail: previewSenderEmail,
+          customInstructions: input.customInstructions ?? undefined,
           recipient: {
             name: previewRecipient.row.name,
             company: previewRecipient.row.company,
@@ -709,6 +710,7 @@ async function processCampaign(campaignId: string): Promise<void> {
       const draft = await draftPersonalizedMail({
         senderCompanySummary: campaign.serviceSummary ?? "",
         senderEmail,
+        customInstructions: campaign.customInstructions ?? undefined,
         currentDraft: latestDraft,
         recipient: {
           name: recipient.name,
@@ -1024,6 +1026,7 @@ export async function appendCampaignChatMessage(input: {
   const assistant = await reviseCampaignDraft({
     senderCompanySummary: campaign.serviceSummary ?? "",
     senderEmail: campaign.user.sendingEmailEncrypted ? decryptSecret(campaign.user.sendingEmailEncrypted) || campaign.user.email : campaign.user.email,
+    customInstructions: campaign.customInstructions ?? undefined,
     recipient: {
       name: anchorRecipient.name,
       company: anchorRecipient.company,

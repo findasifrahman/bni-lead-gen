@@ -176,6 +176,9 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
   const [restoreNotice, setRestoreNotice] = useState("");
   const campaignPageSize = 5;
   const hydratedCampaignId = useRef("");
+  const isSendingCurrentCampaign = Boolean(
+    campaignDetail && (loading || sendingCampaignId === campaignDetail.id)
+  );
 
   const completedLeadRequests = useMemo(
     () => leadRequests.filter((item) => item.status === "COMPLETED" && item.totalLeads > 0),
@@ -545,7 +548,8 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
             </div>
             <div className="action-row">
               <Button variant="primary" disabled={loading} onClick={startCampaign}>
-                <Icon name="check" /> Send emails
+                {loading ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="check" />}{" "}
+                Send emails
               </Button>
               <Button variant="ghost" disabled={loading} onClick={() => setPreview(null)}>
                 Back
@@ -644,8 +648,9 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
                   <Button variant="secondary" disabled={draftSaving} onClick={() => void saveDraft()}>
                     Save draft
                   </Button>
-                  <Button variant="primary" disabled={loading} onClick={() => void startExistingCampaign(campaignDetail.id)}>
-                    <Icon name="check" /> Send emails
+                  <Button variant="primary" disabled={isSendingCurrentCampaign} onClick={() => void startExistingCampaign(campaignDetail.id)}>
+                    {isSendingCurrentCampaign ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="check" />}{" "}
+                    {isSendingCurrentCampaign ? "Sending..." : "Send emails"}
                   </Button>
                 </div>
               </div>
