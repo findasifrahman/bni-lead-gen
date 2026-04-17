@@ -341,9 +341,8 @@ function LoginScreen({
           <h3>Premium lead generation for your organization.</h3>
           <p>Secure login, password reset, credit billing, and organized CSV output in one polished dashboard.</p>
           <div className="brand-badges">
-            <span>JWT protected</span>
-            <span>Postgres + Prisma</span>
-            <span>Headless scraping</span>
+            <span>AI generated email with simple interface</span>
+            <span>Premium scraping</span>
           </div>
         </div>
 
@@ -383,7 +382,7 @@ function LoginScreen({
           </Button>
 
           <p className="auth-footer-note">
-            We rate-limit failed login attempts and send password reset links to your email.
+            Enhanced Security
           </p>
         </form>
       </div>
