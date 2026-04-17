@@ -63,19 +63,31 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/bni_deploy_key -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
+          pm2_cmd() {
+            if command -v pm2 >/dev/null 2>&1; then
+              pm2 "$@"
+              return $?
+            fi
+            if command -v npx >/dev/null 2>&1; then
+              npx --yes pm2 "$@"
+              return $?
+            fi
+            return 127
+          }
+
           cd /opt/bni-lead-gen
           git pull origin main
           npm install
           npm run prisma:generate
           npm run build
           npm run migrate:deploy
-          if command -v pm2 >/dev/null 2>&1; then
-            pm2 restart bni-lead-gen || pm2 start apps/api/dist/server.js --name bni-lead-gen
-            pm2 save
-          elif command -v systemctl >/dev/null 2>&1; then
-            sudo systemctl restart bni-lead-gen
-          else
-            echo "Neither pm2 nor systemctl is available on the VPS."
+          if pm2_cmd restart bni-lead-gen; then
+            pm2_cmd save
+          elif [ $? -eq 127 ]; then
+            echo "PM2 is not available on the VPS for the deploy user. Install PM2 or add it to PATH."
             exit 1
+          else
+            pm2_cmd start apps/api/dist/server.js --name bni-lead-gen
+            pm2_cmd save
           fi
           REMOTE

@@ -372,6 +372,9 @@ The fingerprint printed by GitHub Actions from the deploy workflow must match th
 If you use PM2 on the VPS, the deploy workflow will restart `bni-lead-gen` with PM2.
 If you use `systemd` instead, keep a service named `bni-lead-gen` active on the VPS.
 
+If PM2 is installed only for a specific shell user, make sure GitHub Actions connects as that same user
+or install PM2 globally for the deploy user so the non-interactive SSH session can find it.
+
 The secret value should start with:
 
 ```text
