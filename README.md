@@ -361,6 +361,14 @@ Then:
 - make sure `VPS_USER` is the same user that owns that `authorized_keys` entry
 - if `VPS_USER=root`, confirm your VPS allows root SSH login
 
+To verify the key pair is correct, compare fingerprints:
+
+```bash
+ssh-keygen -lf /root/.ssh/id_ed25519.pub
+```
+
+The fingerprint printed by GitHub Actions from the deploy workflow must match this value.
+
 The secret value should start with:
 
 ```text
