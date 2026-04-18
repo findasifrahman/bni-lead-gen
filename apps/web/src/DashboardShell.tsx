@@ -938,6 +938,8 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             categoryOptions={categoryOptions}
             onReload={loadSummary}
             notify={notify}
+            onOpenLeads={() => setActiveTab("leads")}
+            onDownloadLead={downloadLead}
           />
         )}
 
@@ -1047,6 +1049,8 @@ function HomeTab({
   categoryOptions,
   onReload,
   notify,
+  onOpenLeads,
+  onDownloadLead,
 }: {
   token: string;
   user: PublicUser;
@@ -1059,6 +1063,8 @@ function HomeTab({
   categoryOptions: ReferenceItem[];
   onReload: () => Promise<void>;
   notify: (toast: { tone: ToastTone; title: string; message?: string }) => void;
+  onOpenLeads: () => void;
+  onDownloadLead: (row: LeadRequest) => Promise<void>;
 }) {
   const [form, setForm] = useState<FilterForm>(defaultFilterForm);
   const [submitting, setSubmitting] = useState(false);
@@ -1076,6 +1082,7 @@ function HomeTab({
   const creditsValue = visibleRequest?.requiredCredits ?? preflight?.requiredCredits ?? null;
   const isFiltering = preflightLoading || submitting;
   const leadProgress = currentLeadRequest ? leadProgressPercent(currentLeadRequest) : 0;
+  const completionNoticeShown = useRef("");
 
   useEffect(() => {
     if (!visibleRequest) return;
@@ -1088,6 +1095,18 @@ function HomeTab({
           "No matching profiles were found for the selected filters."
         ),
       });
+      return;
+    }
+    if (visibleRequest.status === "COMPLETED" && visibleRequest.totalLeads > 0) {
+      const signature = `${visibleRequest.id}:${visibleRequest.totalLeads}:${visibleRequest.completedAt ?? ""}`;
+      if (completionNoticeShown.current !== signature) {
+        completionNoticeShown.current = signature;
+        notify({
+          tone: "success",
+          title: "Lead generation completed",
+          message: "Open View Generated Leads to download the finished CSV.",
+        });
+      }
       return;
     }
     if (visibleRequest.status === "FAILED" && !currentLeadRequest) {
@@ -1322,6 +1341,26 @@ function HomeTab({
           <div className="empty-state-card warning">
             <strong>No email profiles found</strong>
             <p>{visibleRequest.errorMessage || "The selected filters did not return any usable email profiles."}</p>
+          </div>
+        )}
+
+        {visibleRequest && visibleRequest.status === "COMPLETED" && visibleRequest.totalLeads > 0 && (
+          <div className="empty-state-card success complete-callout">
+            <div>
+              <strong>Lead generation completed</strong>
+              <p>You can download the finished CSV from View Generated Leads.</p>
+            </div>
+            <div className="action-row">
+              <Button variant="secondary" onClick={onOpenLeads}>
+                View Generated Leads
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => void onDownloadLead(visibleRequest)}
+              >
+                <Icon name="download" /> Download CSV
+              </Button>
+            </div>
           </div>
         )}
 

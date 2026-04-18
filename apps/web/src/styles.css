@@ -556,6 +556,12 @@ textarea {
   color: #7a5600;
 }
 
+.empty-state-card.success {
+  background: linear-gradient(135deg, rgba(15, 157, 88, 0.12), rgba(255, 255, 255, 0.94));
+  border-color: rgba(15, 157, 88, 0.22);
+  color: #0b6c3c;
+}
+
 .empty-state-card p {
   margin: 6px 0 0;
   color: inherit;
