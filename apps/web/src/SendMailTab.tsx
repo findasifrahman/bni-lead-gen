@@ -241,6 +241,7 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
   const campaignPageSize = 5;
   const hydratedCampaignId = useRef("");
   const lastSavedDraftKey = useRef("");
+  const restoreToastKey = useRef("");
   const isSendingCurrentCampaign = Boolean(
     campaignDetail && (loading || sendingCampaignId === campaignDetail.id)
   );
@@ -369,6 +370,8 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
 
   useEffect(() => {
     if (!restoreNotice) return;
+    if (restoreToastKey.current === restoreNotice) return;
+    restoreToastKey.current = restoreNotice;
     notify({
       tone: "neutral",
       title: "Composer restored",

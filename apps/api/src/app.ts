@@ -460,6 +460,7 @@ export function createApp() {
     const applications = await prisma.creditApplication.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
+      take: 10,
     });
     res.json({
       user: toPublicUser(user),
@@ -488,6 +489,27 @@ export function createApp() {
       application,
       message: "Thank you. Our team will contact you soon.",
     });
+  });
+
+  app.delete("/api/account/credit-applications/:id", async (req, res) => {
+    const user = await getAuthedUser(req as AuthedRequest, res);
+    if (!user) return;
+    const application = await prisma.creditApplication.findFirst({
+      where: {
+        id: req.params.id as string,
+        userId: user.id,
+      },
+    });
+    if (!application) {
+      res.status(404).json({ message: "Credit application not found" });
+      return;
+    }
+
+    await prisma.creditApplication.delete({
+      where: { id: application.id },
+    });
+
+    res.json({ message: "Credit application deleted" });
   });
 
   app.get("/api/settings", async (req, res) => {

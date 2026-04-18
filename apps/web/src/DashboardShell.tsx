@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiBaseUrl, apiRequest } from "./lib/api";
 import type { CreditApplication, LeadRequest, MailCampaign, MailRecipient, PublicUser } from "./types";
 import { SendMailTab } from "./SendMailTab";
@@ -537,21 +537,39 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
   const [sessionExpiryNotice, setSessionExpiryNotice] = useState("");
   const toastTimers = useRef<Record<string, number>>({});
   const sessionExpiryToastSent = useRef(false);
+  const toastDedupeRef = useRef<Record<string, string>>({});
 
-  const dismissToast = (id: string) => {
+  const dismissToast = useCallback((id: string) => {
     const timer = toastTimers.current[id];
     if (timer) {
       window.clearTimeout(timer);
       delete toastTimers.current[id];
     }
+    delete toastDedupeRef.current[id];
     setToasts((current) => current.filter((toast) => toast.id !== id));
-  };
+  }, []);
 
-  const notify = (toast: Omit<ToastMessage, "id">) => {
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setToasts((current) => [...current, { id, ...toast }]);
-    toastTimers.current[id] = window.setTimeout(() => dismissToast(id), 4500);
-  };
+  const notify = useCallback(
+    (toast: Omit<ToastMessage, "id">) => {
+      const signature = `${toast.tone}|${toast.title}|${toast.message ?? ""}`;
+      const existingEntry = Object.entries(toastDedupeRef.current).find(([, currentSignature]) => currentSignature === signature);
+      if (existingEntry) {
+        const [existingId] = existingEntry;
+        const timer = toastTimers.current[existingId];
+        if (timer) {
+          window.clearTimeout(timer);
+          toastTimers.current[existingId] = window.setTimeout(() => dismissToast(existingId), 4500);
+        }
+        return;
+      }
+
+      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      toastDedupeRef.current[id] = signature;
+      setToasts((current) => [...current, { id, ...toast }]);
+      toastTimers.current[id] = window.setTimeout(() => dismissToast(id), 4200);
+    },
+    [dismissToast]
+  );
 
   useEffect(() => {
     return () => {
@@ -1535,6 +1553,7 @@ function AccountTab({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
   const creditGap = Math.max(requestedCredits - (account?.user.creditsAvailable ?? user.creditsAvailable), 0);
 
   const submit = async (event: FormEvent) => {
@@ -1566,6 +1585,25 @@ function AccountTab({
       notify({ tone: "danger", title: "Unable to apply for credit", message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteApplication = async (applicationId: string) => {
+    const ok = window.confirm("Delete this credit request?");
+    if (!ok) return;
+    setDeletingId(applicationId);
+    try {
+      await apiRequest<{ message: string }>(`/api/account/credit-applications/${applicationId}`, {
+        method: "DELETE",
+        token,
+      });
+      notify({ tone: "success", title: "Credit request deleted" });
+      await onRefresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to delete credit request";
+      notify({ tone: "danger", title: "Unable to delete credit request", message });
+    } finally {
+      setDeletingId("");
     }
   };
 
@@ -1623,6 +1661,7 @@ function AccountTab({
             <Skeleton className="skeleton-line long" />
           </div>
         )}
+        <div className="subtle compact-note">Showing the latest 10 requests.</div>
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -1631,6 +1670,7 @@ function AccountTab({
                 <th>Credits</th>
                 <th>Status</th>
                 <th>Note</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -1642,11 +1682,20 @@ function AccountTab({
                     <Badge tone={statusTone(item.status)}>{item.status}</Badge>
                   </td>
                   <td>{item.note || "-"}</td>
+                  <td>
+                    <Button
+                      variant="ghost"
+                      disabled={deletingId === item.id || loading}
+                      onClick={() => void deleteApplication(item.id)}
+                    >
+                      Delete
+                    </Button>
+                  </td>
                 </tr>
               ))}
               {!account?.applications?.length && !loading && (
                 <tr>
-                  <td colSpan={4}>No credit applications yet.</td>
+                  <td colSpan={5}>No credit applications yet.</td>
                 </tr>
               )}
             </tbody>
