@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { apiBaseUrl, apiRequest } from "./lib/api";
 import type { CreditApplication, LeadRequest, MailCampaign, MailRecipient, PublicUser } from "./types";
 import { SendMailTab } from "./SendMailTab";
@@ -80,6 +80,15 @@ type PreflightEstimate = {
   estimatedMinutes: number;
 };
 
+type ToastTone = "success" | "warning" | "danger" | "neutral";
+
+type ToastMessage = {
+  id: string;
+  tone: ToastTone;
+  title: string;
+  message?: string;
+};
+
 const defaultFilterForm: FilterForm = {
   keyword: "",
   country: "",
@@ -101,6 +110,10 @@ function formatDate(value: string | null | undefined) {
 
 function leadStatusLabel(status: LeadRequest["status"]) {
   switch (status) {
+    case "COUNTING":
+      return "Counting";
+    case "AWAITING_APPROVAL":
+      return "Awaiting approval";
     case "QUEUED":
       return "Queued";
     case "RUNNING":
@@ -118,7 +131,9 @@ function leadStatusLabel(status: LeadRequest["status"]) {
 
 function statusTone(status: LeadRequest["status"] | string) {
   switch (status) {
+    case "COUNTING":
     case "QUEUED":
+    case "AWAITING_APPROVAL":
       return "warning";
     case "COMPLETED":
       return "success";
@@ -129,6 +144,43 @@ function statusTone(status: LeadRequest["status"] | string) {
       return "danger";
     default:
       return "neutral";
+  }
+}
+
+function leadProgressPercent(request: LeadRequest): number {
+  switch (request.status) {
+    case "COMPLETED":
+      return 100;
+    case "FAILED":
+    case "CANCELLED":
+      return 100;
+    case "COUNTING":
+      return 30;
+    case "AWAITING_APPROVAL":
+      return 60;
+    case "QUEUED":
+      return 10;
+    case "RUNNING": {
+      const estimatedMinutes = request.estimatedMinutes > 0 ? request.estimatedMinutes : Math.max(1, Math.ceil(request.totalLeads * 0.42));
+      const startedAt = request.startedAt ? new Date(request.startedAt).getTime() : Date.now();
+      const elapsedMinutes = Math.max(0, (Date.now() - startedAt) / 60000);
+      const progress = Math.round((elapsedMinutes / estimatedMinutes) * 100);
+      return Math.max(5, Math.min(progress, 95));
+    }
+    default:
+      return 0;
+  }
+}
+
+function decodeJwtExp(token: string | null): number | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
   }
 }
 
@@ -250,6 +302,10 @@ function Field({
 
 function Badge({ tone, children }: { tone: "success" | "warning" | "danger" | "neutral"; children: React.ReactNode }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
+}
+
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`skeleton ${className}`.trim()} aria-hidden="true" />;
 }
 
 function resolveReferenceLabel(value: string, options: ReferenceItem[]) {
@@ -461,9 +517,11 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
   const isAdmin = user.role === "ADMIN";
   const [activeTab, setActiveTab] = useState<DashboardTab>(isAdmin ? "admin" : "home");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState("");
+  const [summaryPollFailures, setSummaryPollFailures] = useState(0);
   const [countryOptions, setCountryOptions] = useState<ReferenceItem[]>([]);
   const [categoryOptions, setCategoryOptions] = useState<ReferenceItem[]>([]);
   const [leadRequests, setLeadRequests] = useState<LeadRequest[]>([]);
@@ -476,6 +534,49 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
   const [adminUsers, setAdminUsers] = useState<AdminUsersResponse["items"]>([]);
   const [adminCreditApplications, setAdminCreditApplications] = useState<AdminCreditApplicationsResponse["items"]>([]);
   const [loadingTab, setLoadingTab] = useState(false);
+  const [sessionExpiryNotice, setSessionExpiryNotice] = useState("");
+  const toastTimers = useRef<Record<string, number>>({});
+  const sessionExpiryToastSent = useRef(false);
+
+  const dismissToast = (id: string) => {
+    const timer = toastTimers.current[id];
+    if (timer) {
+      window.clearTimeout(timer);
+      delete toastTimers.current[id];
+    }
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  };
+
+  const notify = (toast: Omit<ToastMessage, "id">) => {
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setToasts((current) => [...current, { id, ...toast }]);
+    toastTimers.current[id] = window.setTimeout(() => dismissToast(id), 4500);
+  };
+
+  useEffect(() => {
+    return () => {
+      Object.values(toastTimers.current).forEach((timer) => window.clearTimeout(timer));
+      toastTimers.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mobileNavOpen) {
+      document.body.style.overflow = "";
+      return;
+    }
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileNavOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mobileNavOpen]);
 
   const loadSummary = async () => {
     setSummaryError("");
@@ -570,6 +671,11 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
       } catch (err) {
         if (!mounted) return;
         setSummaryError(err instanceof Error ? err.message : "Unable to load dashboard");
+        notify({
+          tone: "danger",
+          title: "Unable to load dashboard",
+          message: err instanceof Error ? err.message : "Unable to load dashboard",
+        });
       } finally {
         if (mounted) setSummaryLoading(false);
       }
@@ -581,11 +687,60 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
   }, [token]);
 
   useEffect(() => {
+    const expiresAt = decodeJwtExp(token);
+    if (!expiresAt) {
+      setSessionExpiryNotice("");
+      return;
+    }
+
+    const updateNotice = () => {
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        setSessionExpiryNotice("Your session has expired. Please sign in again.");
+        if (!sessionExpiryToastSent.current) {
+          notify({ tone: "danger", title: "Session expired", message: "Please sign in again." });
+          sessionExpiryToastSent.current = true;
+        }
+        return;
+      }
+      if (remaining <= 5 * 60 * 1000) {
+        setSessionExpiryNotice(`Stay logged in? Your session expires in ${Math.max(1, Math.ceil(remaining / 60000))} minute(s).`);
+        if (!sessionExpiryToastSent.current) {
+          notify({
+            tone: "warning",
+            title: "Session expiring soon",
+            message: `Your session expires in ${Math.max(1, Math.ceil(remaining / 60000))} minute(s).`,
+          });
+          sessionExpiryToastSent.current = true;
+        }
+        return;
+      }
+      setSessionExpiryNotice("");
+      sessionExpiryToastSent.current = false;
+    };
+
+    updateNotice();
+    const timer = window.setInterval(updateNotice, 60000);
+    return () => window.clearInterval(timer);
+  }, [token]);
+
+  useEffect(() => {
     if (!summary?.activeLeadRequest || ["COMPLETED", "FAILED", "CANCELLED"].includes(summary.activeLeadRequest.status)) {
+      setSummaryPollFailures(0);
       return;
     }
     const timer = window.setInterval(() => {
-      void loadSummary().catch(() => undefined);
+      void loadSummary()
+        .then(() => setSummaryPollFailures(0))
+        .catch(() => {
+          setSummaryPollFailures((current) => {
+            const next = current + 1;
+            if (next >= 3) {
+              setSummaryError("Live status updates paused. Refresh to reconnect.");
+            }
+            return next;
+          });
+        });
     }, 2000);
     return () => window.clearInterval(timer);
   }, [summary?.activeLeadRequest?.id, summary?.activeLeadRequest?.status, token]);
@@ -716,8 +871,41 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
           </div>
         </header>
 
-        {summaryLoading && <div className="loading-banner">Loading your workspace...</div>}
-        {summaryError && <div className="alert alert-error">{summaryError}</div>}
+        {summaryLoading && (
+          <section className="workspace-skeleton" aria-label="Loading workspace">
+            <div className="skeleton-line short" />
+            <div className="skeleton-line long" />
+            <div className="workspace-skeleton-grid">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="workspace-skeleton-card">
+                  <div className="skeleton-line short" />
+                  <div className="skeleton-line" />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        {summaryPollFailures > 0 && !summaryError && (
+          <div className="toast-inline toast-inline-warning">
+            Live status updates retrying... ({summaryPollFailures}/3)
+          </div>
+        )}
+        {sessionExpiryNotice && (
+          <div className="toast-inline toast-inline-warning">
+            <div>{sessionExpiryNotice}</div>
+          </div>
+        )}
+        {summaryError && !summaryLoading && (
+          <div className="empty-state-card warning summary-error-card">
+            <div>
+              <strong>Workspace load paused</strong>
+              <p>{summaryError}</p>
+            </div>
+            <Button variant="ghost" onClick={() => void loadSummary()}>
+              Retry
+            </Button>
+          </div>
+        )}
 
         {activeTab === "home" && (
           <HomeTab
@@ -727,9 +915,11 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             lastLeadRequest={summary?.lastLeadRequest ?? null}
             isRunning={isRunning}
             canCancel={canCancel}
+            hasBniCredentials={summary?.user.hasBniUsername ?? user.hasBniUsername}
             countryOptions={countryOptions}
             categoryOptions={categoryOptions}
             onReload={loadSummary}
+            notify={notify}
           />
         )}
 
@@ -746,6 +936,7 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             onRefresh={loadLeads}
             onDelete={deleteLead}
             onDownload={downloadLead}
+            notify={notify}
           />
         )}
 
@@ -753,9 +944,11 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
           <SendMailTab
             token={token}
             user={summary?.user ?? user}
+            senderEmail={settings?.sendingEmail || summary?.user.email || user.email}
             leadRequests={leadRequests}
             campaigns={mailCampaigns}
             onRefresh={loadMailCampaigns}
+            notify={notify}
           />
         )}
 
@@ -765,6 +958,8 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             account={account}
             onRefresh={loadAccount}
             user={summary?.user ?? user}
+            loading={loadingTab && !account}
+            notify={notify}
           />
         )}
 
@@ -773,6 +968,8 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             token={token}
             settings={settings}
             onRefresh={loadSettings}
+            loading={loadingTab && !settings}
+            notify={notify}
           />
         )}
 
@@ -782,6 +979,8 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             users={adminUsers}
             applications={adminCreditApplications}
             onRefresh={loadAdmin}
+            loading={loadingTab && !adminUsers.length && !adminCreditApplications.length}
+            notify={notify}
           />
         )}
 
@@ -800,6 +999,19 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
             <p>Contact: info@malishagroup.com</p>
           </div>
         </footer>
+        <div className="toast-stack" aria-live="polite" aria-atomic="true">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast toast-${toast.tone}`}>
+              <div className="toast-copy">
+                <strong>{toast.title}</strong>
+                {toast.message && <p>{toast.message}</p>}
+              </div>
+              <button type="button" className="toast-close" onClick={() => dismissToast(toast.id)} aria-label="Dismiss notification">
+                <Icon name="close" />
+              </button>
+            </div>
+          ))}
+        </div>
       </main>
     </div>
   );
@@ -812,9 +1024,11 @@ function HomeTab({
   lastLeadRequest,
   isRunning,
   canCancel,
+  hasBniCredentials,
   countryOptions,
   categoryOptions,
   onReload,
+  notify,
 }: {
   token: string;
   user: PublicUser;
@@ -822,13 +1036,13 @@ function HomeTab({
   lastLeadRequest: LeadRequest | null;
   isRunning: boolean;
   canCancel: boolean;
+  hasBniCredentials: boolean;
   countryOptions: ReferenceItem[];
   categoryOptions: ReferenceItem[];
   onReload: () => Promise<void>;
+  notify: (toast: { tone: ToastTone; title: string; message?: string }) => void;
 }) {
   const [form, setForm] = useState<FilterForm>(defaultFilterForm);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [preflight, setPreflight] = useState<PreflightEstimate | null>(null);
   const [preflightLoading, setPreflightLoading] = useState(false);
@@ -843,40 +1057,56 @@ function HomeTab({
   const creditsLabel = isCompleted ? "Credits charged" : "Maximum reserved";
   const creditsValue = visibleRequest?.requiredCredits ?? preflight?.requiredCredits ?? null;
   const isFiltering = preflightLoading || submitting;
+  const leadProgress = currentLeadRequest ? leadProgressPercent(currentLeadRequest) : 0;
 
   useEffect(() => {
-    if (!visibleRequest) {
-      setMessage("");
-      return;
-    }
+    if (!visibleRequest) return;
     if (visibleRequest.status === "COMPLETED" && visibleRequest.totalLeads === 0) {
-      setMessage(
-        shortRequestMessage(
+      notify({
+        tone: "warning",
+        title: "No matching profiles found",
+        message: shortRequestMessage(
           visibleRequest.errorMessage,
           "No matching profiles were found for the selected filters."
-        )
-      );
+        ),
+      });
       return;
     }
     if (visibleRequest.status === "FAILED" && !currentLeadRequest) {
-      setMessage(shortRequestMessage(visibleRequest.errorMessage, "Last request failed."));
-      return;
+      notify({
+        tone: "danger",
+        title: "Last request failed",
+        message: shortRequestMessage(visibleRequest.errorMessage, "Last request failed."),
+      });
     }
-    setMessage(`Current request is ${leadStatusLabel(visibleRequest.status)}.`);
-  }, [visibleRequest, currentLeadRequest]);
+  }, [visibleRequest, currentLeadRequest, notify]);
 
   const runPreflight = async () => {
+    if (!hasBniCredentials) {
+      notify({
+        tone: "warning",
+        title: "BNI credentials required",
+        message: "Save your BNI username and password in Settings before running lead generation.",
+      });
+      return;
+    }
     if (!hasAnyFilter) {
-      setError("Select at least one filter: keyword, country, or category.");
+      notify({
+        tone: "warning",
+        title: "Select a filter",
+        message: "Choose at least one filter: keyword, country, or category.",
+      });
       return;
     }
     if (hasInvalidKeyword) {
-      setError("Keyword must be empty or at least 2 characters.");
+      notify({
+        tone: "warning",
+        title: "Invalid keyword",
+        message: "Keyword must be empty or at least 2 characters.",
+      });
       return;
     }
     setPreflightLoading(true);
-    setError("");
-    setMessage("");
     try {
       const result = await apiRequest<{ estimate: PreflightEstimate; message: string }>("/api/lead-requests/preflight", {
         method: "POST",
@@ -884,9 +1114,17 @@ function HomeTab({
         body: JSON.stringify(form),
       });
       setPreflight(result.estimate);
-      setMessage(result.message);
+      notify({
+        tone: "success",
+        title: "Estimate ready",
+        message: result.message,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to estimate generation");
+      notify({
+        tone: "danger",
+        title: "Unable to estimate generation",
+        message: err instanceof Error ? err.message : "Unable to estimate generation",
+      });
     } finally {
       setPreflightLoading(false);
     }
@@ -895,7 +1133,6 @@ function HomeTab({
   const confirmStart = async () => {
     if (!hasAnyFilter || !preflight || preflight.totalLeads <= 0) return;
     setSubmitting(true);
-    setError("");
     try {
       const result = await apiRequest<{ item: LeadRequest; message: string }>("/api/lead-requests", {
         method: "POST",
@@ -905,11 +1142,19 @@ function HomeTab({
           estimatedRequiredCredits: preflight.requiredCredits,
         }),
       });
-      setMessage(result.message);
+      notify({
+        tone: "success",
+        title: "Lead generation started",
+        message: result.message,
+      });
       setPreflight(null);
       await onReload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start generation");
+      notify({
+        tone: "danger",
+        title: "Unable to start generation",
+        message: err instanceof Error ? err.message : "Unable to start generation",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -918,7 +1163,6 @@ function HomeTab({
   const cancelRequest = async () => {
     if (!visibleRequest) return;
     setSubmitting(true);
-    setError("");
     try {
       await apiRequest<{ message: string }>("/api/lead-requests/" + visibleRequest.id + "/cancel", {
         method: "POST",
@@ -926,8 +1170,17 @@ function HomeTab({
       });
       setPreflight(null);
       await onReload();
+      notify({
+        tone: "success",
+        title: "Request cancelled",
+        message: "The active lead request was cancelled.",
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to cancel request");
+      notify({
+        tone: "danger",
+        title: "Unable to cancel request",
+        message: err instanceof Error ? err.message : "Unable to cancel request",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -952,7 +1205,15 @@ function HomeTab({
         </div>
       </Card>
 
-      <Card title="Lead generator" subtitle="Use the same filters as BNI Connect." icon="filter">
+        <Card title="Lead generator" subtitle="Use the same filters as BNI Connect." icon="filter">
+        {!hasBniCredentials && (
+          <div className="empty-state-card warning" style={{ marginBottom: 16, alignItems: "flex-start" }}>
+            <div>
+              <strong>BNI credentials missing</strong>
+              <p>Save your BNI username and password in Settings before running a scrape.</p>
+            </div>
+          </div>
+        )}
         <FilterChips
           keyword={form.keyword}
           country={form.country}
@@ -992,7 +1253,7 @@ function HomeTab({
         </div>
 
         <div className="action-row">
-          <Button variant="secondary" disabled={isRunning || preflightLoading || submitting} onClick={runPreflight}>
+          <Button variant="secondary" disabled={isRunning || preflightLoading || submitting || !hasBniCredentials} onClick={runPreflight}>
             {isFiltering ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="filter" />}{" "}
             {preflightLoading ? "Filtering..." : "Filter"}
           </Button>
@@ -1046,9 +1307,6 @@ function HomeTab({
           </div>
         )}
 
-        {message && <div className="alert alert-success">{message}</div>}
-        {error && <div className="alert alert-error">{error}</div>}
-
         <div className="result-panel">
           <div>
             <span className="field-hint">Queue status</span>
@@ -1078,6 +1336,18 @@ function HomeTab({
           </div>
         </div>
 
+        {currentLeadRequest && (currentLeadRequest.status === "RUNNING" || currentLeadRequest.status === "QUEUED" || currentLeadRequest.status === "COUNTING" || currentLeadRequest.status === "AWAITING_APPROVAL") && (
+          <div className="progress-block">
+            <div className="progress-track">
+              <div className="progress-fill" style={{ width: `${leadProgress}%` }} />
+            </div>
+            <div className="progress-meta">
+              <span>{leadProgress}% complete</span>
+              <span>{currencyLike(currentLeadRequest.totalLeads)} total lead(s) estimated</span>
+            </div>
+          </div>
+        )}
+
         <div className="info-callout">
           <Icon name="shield" />
           <p>
@@ -1101,6 +1371,7 @@ function LeadsTab({
   onRefresh,
   onDelete,
   onDownload,
+  notify,
 }: {
   rows: LeadRequest[];
   loading: boolean;
@@ -1113,6 +1384,7 @@ function LeadsTab({
   onRefresh: () => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onDownload: (row: LeadRequest) => Promise<void>;
+  notify: (toast: { tone: ToastTone; title: string; message?: string }) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [deletingId, setDeletingId] = useState("");
@@ -1121,6 +1393,13 @@ function LeadsTab({
     setBusy(true);
     try {
       await onRefresh();
+      notify({ tone: "success", title: "Leads refreshed" });
+    } catch (err) {
+      notify({
+        tone: "danger",
+        title: "Unable to refresh leads",
+        message: err instanceof Error ? err.message : "Unable to refresh leads",
+      });
     } finally {
       setBusy(false);
     }
@@ -1130,6 +1409,13 @@ function LeadsTab({
     setDeletingId(id);
     try {
       await onDelete(id);
+      notify({ tone: "success", title: "Lead deleted" });
+    } catch (err) {
+      notify({
+        tone: "danger",
+        title: "Unable to delete lead",
+        message: err instanceof Error ? err.message : "Unable to delete lead",
+      });
     } finally {
       setDeletingId("");
     }
@@ -1139,6 +1425,13 @@ function LeadsTab({
     setBusy(true);
     try {
       await onDownload(row);
+      notify({ tone: "success", title: "Download started", message: row.filename });
+    } catch (err) {
+      notify({
+        tone: "danger",
+        title: "Unable to download file",
+        message: err instanceof Error ? err.message : "Unable to download file",
+      });
     } finally {
       setBusy(false);
     }
@@ -1176,6 +1469,20 @@ function LeadsTab({
             </tr>
           </thead>
           <tbody>
+            {loading && !rows.length && (
+              <>
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <tr key={`lead-skeleton-${index}`}>
+                    <td colSpan={8}>
+                      <div className="table-skeleton-row">
+                        <Skeleton className="skeleton-line short" />
+                        <Skeleton className="skeleton-line" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </>
+            )}
             {rows.map((row) => (
               <tr key={row.id}>
                 <td>{formatDate(row.completedAt || row.requestedAt)}</td>
@@ -1196,9 +1503,9 @@ function LeadsTab({
                 </td>
               </tr>
             ))}
-            {!rows.length && (
+            {!rows.length && !loading && (
               <tr>
-                <td colSpan={8}>{loading ? "Loading generated leads..." : "No completed CSV files yet."}</td>
+                <td colSpan={8}>No completed CSV files yet.</td>
               </tr>
             )}
           </tbody>
@@ -1213,20 +1520,31 @@ function AccountTab({
   account,
   onRefresh,
   user,
+  loading,
+  notify,
 }: {
   token: string;
   account: AccountResponse | null;
   onRefresh: () => Promise<void>;
   user: PublicUser;
+  loading: boolean;
+  notify: (toast: { tone: ToastTone; title: string; message?: string }) => void;
 }) {
   const [requestedCredits, setRequestedCredits] = useState(200);
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const creditGap = Math.max(requestedCredits - (account?.user.creditsAvailable ?? user.creditsAvailable), 0);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!Number.isInteger(requestedCredits) || requestedCredits < 200 || requestedCredits > 5000) {
+      const message = "Requested credits must be between 200 and 5000.";
+      setError(message);
+      notify({ tone: "warning", title: "Invalid credit request", message });
+      return;
+    }
     setSaving(true);
     setMessage("");
     setError("");
@@ -1240,9 +1558,12 @@ function AccountTab({
         }
       );
       setMessage(result.message);
+      notify({ tone: "success", title: "Credit request submitted", message: result.message });
       await onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to apply for credit");
+      const message = err instanceof Error ? err.message : "Unable to apply for credit";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to apply for credit", message });
     } finally {
       setSaving(false);
     }
@@ -1267,14 +1588,27 @@ function AccountTab({
               min={200}
               max={5000}
               value={requestedCredits}
-              onChange={(event) => setRequestedCredits(Number(event.target.value))}
+              onChange={(event) => {
+                const value = event.target.value.trim();
+                if (!value) {
+                  setRequestedCredits(0);
+                  return;
+                }
+                const parsed = Number.parseInt(value, 10);
+                if (Number.isNaN(parsed)) {
+                  return;
+                }
+                setRequestedCredits(parsed);
+              }}
             />
+            <span className="field-hint">
+              Current balance: {currencyLike(account?.user.creditsAvailable ?? user.creditsAvailable)}.{" "}
+              {creditGap > 0 ? `You need ${currencyLike(creditGap)} more credits for this request.` : "You have enough credits for this request."}
+            </span>
           </Field>
           <Field label="Request note" hint="Tell the admin why you need more credits.">
             <textarea className="input textarea" value={note} onChange={(event) => setNote(event.target.value)} />
           </Field>
-          {message && <div className="alert alert-success">{message}</div>}
-          {error && <div className="alert alert-error">{error}</div>}
           <Button type="submit" disabled={saving}>
             Apply now
           </Button>
@@ -1282,6 +1616,13 @@ function AccountTab({
       </Card>
 
       <Card title="Credit requests" subtitle="Your submitted applications appear here." icon="leads">
+        {loading && !(account?.applications?.length ?? 0) && (
+          <div className="skeleton-card-stack">
+            <Skeleton className="skeleton-line short" />
+            <Skeleton className="skeleton-line" />
+            <Skeleton className="skeleton-line long" />
+          </div>
+        )}
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -1303,7 +1644,7 @@ function AccountTab({
                   <td>{item.note || "-"}</td>
                 </tr>
               ))}
-              {!account?.applications?.length && (
+              {!account?.applications?.length && !loading && (
                 <tr>
                   <td colSpan={4}>No credit applications yet.</td>
                 </tr>
@@ -1320,10 +1661,14 @@ function SettingsTab({
   token,
   settings,
   onRefresh,
+  loading,
+  notify,
 }: {
   token: string;
   settings: SettingsResponse["settings"] | null;
   onRefresh: () => Promise<void>;
+  loading: boolean;
+  notify: (toast: { tone: ToastTone; title: string; message?: string }) => void;
 }) {
   const [bniUsername, setBniUsername] = useState("");
   const [bniPassword, setBniPassword] = useState("");
@@ -1339,6 +1684,7 @@ function SettingsTab({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testingEmail, setTestingEmail] = useState(false);
 
   useEffect(() => {
     if (settings) {
@@ -1363,7 +1709,9 @@ function SettingsTab({
       setBniPassword(result.settings.bniPassword);
       setShowBniPassword(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to reveal password");
+      const message = err instanceof Error ? err.message : "Unable to reveal password";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to reveal password", message });
     } finally {
       setPasswordLoading(false);
     }
@@ -1381,7 +1729,9 @@ function SettingsTab({
       setSendingAppPassword(result.settings.sendingAppPassword);
       setShowSendingAppPassword(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to reveal password");
+      const message = err instanceof Error ? err.message : "Unable to reveal password";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to reveal password", message });
     } finally {
       setSendingPasswordLoading(false);
     }
@@ -1413,10 +1763,33 @@ function SettingsTab({
       setBniPassword("");
       setSendingAppPassword("");
       await onRefresh();
+      notify({ tone: "success", title: "Settings saved", message: result.message });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save settings");
+      const message = err instanceof Error ? err.message : "Unable to save settings";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to save settings", message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const testEmailConnection = async () => {
+    setTestingEmail(true);
+    setMessage("");
+    setError("");
+    try {
+      const result = await apiRequest<{ message: string }>("/api/settings/test-email", {
+        method: "POST",
+        token,
+      });
+      setMessage(result.message);
+      notify({ tone: "success", title: "Test email sent", message: result.message });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to send test email";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to send test email", message });
+    } finally {
+      setTestingEmail(false);
     }
   };
 
@@ -1452,8 +1825,6 @@ function SettingsTab({
               {settings?.hasBniPassword ? "Click the eye to reveal or hide the saved password." : "No BNI password saved yet."}
             </span>
           </label>
-          {message && <div className="alert alert-success">{message}</div>}
-          {error && <div className="alert alert-error">{error}</div>}
           <Button type="submit" disabled={saving}>
             Save credentials
           </Button>
@@ -1465,6 +1836,13 @@ function SettingsTab({
         subtitle="Used for outbound outreach emails. Add the Gmail address and an app password from your Google account security settings."
         icon="mail"
       >
+        {loading && !settings && (
+          <div className="skeleton-card-stack">
+            <Skeleton className="skeleton-line short" />
+            <Skeleton className="skeleton-line" />
+            <Skeleton className="skeleton-line long" />
+          </div>
+        )}
         <form className="form-grid" onSubmit={submit}>
           <Field label="Sending email" hint="This address will be used as the From address.">
             <input className="input" type="email" value={sendingEmail} onChange={(event) => setSendingEmail(event.target.value)} />
@@ -1498,6 +1876,9 @@ function SettingsTab({
             <Button type="submit" disabled={saving}>
               Save sender credentials
             </Button>
+            <Button type="button" variant="secondary" disabled={testingEmail} onClick={() => void testEmailConnection()}>
+              {testingEmail ? "Sending test..." : "Test email connection"}
+            </Button>
           </div>
         </form>
       </Card>
@@ -1522,6 +1903,12 @@ function SettingsTab({
       </Card>
 
       <Card title="Server defaults" subtitle="These values are locked on the hosted server." icon="settings">
+        {loading && !settings && (
+          <div className="skeleton-card-stack" style={{ marginBottom: 12 }}>
+            <Skeleton className="skeleton-line short" />
+            <Skeleton className="skeleton-line long" />
+          </div>
+        )}
         <div className="settings-lock-grid">
           <div className="lock-item">
             <span>MAX_PROFILE_CONCURRENCY</span>
@@ -1558,11 +1945,15 @@ function AdminTab({
   users,
   applications,
   onRefresh,
+  loading,
+  notify,
 }: {
   token: string;
   users: AdminUsersResponse["items"];
   applications: AdminCreditApplicationsResponse["items"];
   onRefresh: () => Promise<void>;
+  loading: boolean;
+  notify: (toast: { tone: ToastTone; title: string; message?: string }) => void;
 }) {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
@@ -1577,7 +1968,9 @@ function AdminTab({
   const updateUserCredits = async (userId: string) => {
     const amount = Number(creditAmounts[userId] ?? "0");
     if (!Number.isFinite(amount) || amount === 0) {
-      setError("Enter a credit amount to grant or deduct.");
+      const message = "Enter a credit amount to grant or deduct.";
+      setError(message);
+      notify({ tone: "warning", title: "Invalid credit amount", message });
       return;
     }
     setSaving(true);
@@ -1590,10 +1983,13 @@ function AdminTab({
         body: JSON.stringify({ amount }),
       });
       setMessage("User credits updated.");
+      notify({ tone: "success", title: "User credits updated" });
       setCreditAmounts((current) => ({ ...current, [userId]: "" }));
       await onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update credits");
+      const message = err instanceof Error ? err.message : "Unable to update credits";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to update credits", message });
     } finally {
       setSaving(false);
     }
@@ -1613,10 +2009,13 @@ function AdminTab({
         }),
       });
       setMessage(`Application ${status.toLowerCase()}.`);
+      notify({ tone: status === "APPROVED" ? "success" : "warning", title: `Application ${status.toLowerCase()}` });
       setReviewNotes((current) => ({ ...current, [applicationId]: "" }));
       await onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update application");
+      const message = err instanceof Error ? err.message : "Unable to update application";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to update application", message });
     } finally {
       setSaving(false);
     }
@@ -1634,12 +2033,15 @@ function AdminTab({
         body: JSON.stringify({ email, fullName, password, role }),
       });
       setMessage("User created successfully.");
+      notify({ tone: "success", title: "User created successfully" });
       setEmail("");
       setFullName("");
       setPassword("");
       await onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to create user");
+      const message = err instanceof Error ? err.message : "Unable to create user";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to create user", message });
     } finally {
       setSaving(false);
     }
@@ -1664,8 +2066,6 @@ function AdminTab({
               <option value="ADMIN">Admin</option>
             </select>
           </Field>
-          {message && <div className="alert alert-success">{message}</div>}
-          {error && <div className="alert alert-error">{error}</div>}
           <Button type="submit" disabled={saving}>
             Create account
           </Button>
@@ -1673,6 +2073,12 @@ function AdminTab({
       </Card>
 
       <Card title="Credit applications" subtitle="Review pending requests from users." icon="wallet">
+        {loading && !applications.length && (
+          <div className="skeleton-card-stack" style={{ marginBottom: 12 }}>
+            <Skeleton className="skeleton-line short" />
+            <Skeleton className="skeleton-line" />
+          </div>
+        )}
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -1718,7 +2124,7 @@ function AdminTab({
                   </td>
                 </tr>
               ))}
-              {!applications.length && (
+              {!applications.length && !loading && (
                 <tr>
                   <td colSpan={6}>No credit applications yet.</td>
                 </tr>
@@ -1729,6 +2135,12 @@ function AdminTab({
       </Card>
 
       <Card title="User directory" subtitle="Create and review user accounts from one place." icon="leads">
+        {loading && !users.length && (
+          <div className="skeleton-card-stack" style={{ marginBottom: 12 }}>
+            <Skeleton className="skeleton-line short" />
+            <Skeleton className="skeleton-line" />
+          </div>
+        )}
         <div className="table-wrap">
           <table className="data-table">
             <thead>

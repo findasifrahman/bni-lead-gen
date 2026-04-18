@@ -117,6 +117,16 @@ function extractResponseText(payload: Record<string, unknown>): string {
   return "";
 }
 
+function normalizeDraftMailResult(value: unknown, fallbackSubject: string, fallbackBody: string): DraftMailResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { subject: fallbackSubject, body: fallbackBody };
+  }
+  const record = value as Record<string, unknown>;
+  const subject = typeof record.subject === "string" && record.subject.trim() ? record.subject.trim() : fallbackSubject;
+  const body = typeof record.body === "string" && record.body.trim() ? record.body.trim() : fallbackBody;
+  return { subject, body };
+}
+
 async function collectWebsiteSignals(urls: string[]): Promise<WebsiteSignals[]> {
   const results: WebsiteSignals[] = [];
   for (const rawUrl of urls) {
@@ -326,7 +336,11 @@ async function callOpenAiResponsesJson<T>(input: {
     throw new Error("OpenAI response missing text");
   }
 
-  return JSON.parse(text) as T;
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("OpenAI response had invalid JSON shape");
+  }
+  return parsed as T;
 }
 
 export async function draftPersonalizedMail(input: {
@@ -386,8 +400,8 @@ export async function draftPersonalizedMail(input: {
 
   try {
     if (env.openaiApiKey.trim()) {
-      const parsed = await callOpenAiResponsesJson<DraftMailResult>({
-        model: env.openaiModelName.trim() || "gpt-5.4-nano",
+      const parsed = await callOpenAiResponsesJson<unknown>({
+        model: env.openaiModelName.trim() || "gpt-4o-mini",
         instructions:
           "You write highly personalized, respectful cold outreach emails. Be specific and concrete. Use the research summary, sender notes, and recipient context to create a compelling, human-sounding message. Treat sender notes as important requirements, especially relationship context, sender identity, and tone. Return only valid JSON with keys subject and body.",
         payload: prompt,
@@ -402,9 +416,7 @@ export async function draftPersonalizedMail(input: {
           },
         },
       });
-      const subject = parsed.subject.trim() || fallbackSubject;
-      const body = parsed.body.trim() || fallbackBody;
-      return { subject, body };
+      return normalizeDraftMailResult(parsed, fallbackSubject, fallbackBody);
     }
   } catch {
     // Fall back to Zhipu below.
@@ -428,10 +440,7 @@ export async function draftPersonalizedMail(input: {
 
   try {
     const content = await callZhipuChat(env.zhipuModelNameGeneral, messages, 0.35);
-    const parsed = JSON.parse(content) as { subject?: string; body?: string };
-    const subject = typeof parsed.subject === "string" && parsed.subject.trim() ? parsed.subject.trim() : fallbackSubject;
-    const body = typeof parsed.body === "string" && parsed.body.trim() ? parsed.body.trim() : fallbackBody;
-    return { subject, body };
+    return normalizeDraftMailResult(JSON.parse(content), fallbackSubject, fallbackBody);
   } catch {
     return { subject: fallbackSubject, body: fallbackBody };
   }
@@ -494,10 +503,7 @@ export async function reviseCampaignDraft(input: {
 
   try {
     const content = await callZhipuChat(env.zhipuModelNameGeneral, messages, 0.35);
-    const parsed = JSON.parse(content) as { subject?: string; body?: string };
-    const subject = typeof parsed.subject === "string" && parsed.subject.trim() ? parsed.subject.trim() : base.subject;
-    const body = typeof parsed.body === "string" && parsed.body.trim() ? parsed.body.trim() : base.body;
-    return { subject, body };
+    return normalizeDraftMailResult(JSON.parse(content), base.subject, base.body);
   } catch {
     return {
       subject: base.subject,

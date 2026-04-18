@@ -15,6 +15,7 @@ import { encryptSecret, decryptSecret } from "./lib/crypto";
 import { AuthedRequest, requireAdmin, requireAuth, signJwt } from "./lib/auth";
 import { getCategories, getCountryItems } from "./services/reference";
 import { sendPasswordResetEmail } from "./services/email";
+import { sendMailWithCredentials } from "./services/mailer";
 import {
   cancelRunningJob,
   estimateLeadGenerationByCredentials,
@@ -106,12 +107,16 @@ const forgotPasswordSchema = z.object({
 });
 
 const creditAdjustSchema = z.object({
-  amount: z.number().int(),
+  amount: z.number().int().min(-10000).max(100000),
 });
 
 function safeJsonParse<T>(text: string, fallback: T): T {
   try {
-    return JSON.parse(text) as T;
+    const parsed = JSON.parse(text);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return fallback;
+    }
+    return parsed as T;
   } catch {
     return fallback;
   }
@@ -281,9 +286,11 @@ export function createApp() {
 
     const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
     if (!user) {
+      void appendApiDebug(`forgot-password requested for missing account email=${parsed.data.email}`);
       res.json({ message: "If the email exists, a reset link will be sent." });
       return;
     }
+    void appendApiDebug(`forgot-password requested for existing account email=${parsed.data.email}`);
 
     const token = crypto.randomBytes(32).toString("hex");
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -550,6 +557,32 @@ export function createApp() {
     });
 
     res.json({ message: "Settings saved successfully" });
+  });
+
+  app.post("/api/settings/test-email", async (req, res) => {
+    const user = await getAuthedUser(req as AuthedRequest, res);
+    if (!user) return;
+    const sendingEmail = decryptSecret(user.sendingEmailEncrypted ?? "");
+    const sendingAppPassword = decryptSecret(user.sendingAppPasswordEncrypted ?? "");
+    if (!sendingEmail || !sendingAppPassword) {
+      res.status(400).json({ message: "Save sender email and app password before testing" });
+      return;
+    }
+
+    await sendMailWithCredentials(
+      {
+        senderEmail: sendingEmail,
+        appPassword: sendingAppPassword,
+      },
+      {
+        to: user.email,
+        subject: "BNI Lead Gen test email",
+        text: `This is a test email sent from ${sendingEmail}. If you received this, your outbound mail settings are working.`,
+        html: `<p>This is a test email sent from <strong>${sendingEmail}</strong>.</p><p>If you received this, your outbound mail settings are working.</p>`,
+      }
+    );
+
+    res.json({ message: "Test email sent. Please check your inbox." });
   });
 
   app.get("/api/mail-campaigns", async (req, res) => {

@@ -672,6 +672,10 @@ async function processCampaign(campaignId: string): Promise<void> {
   if (!campaign) {
     return;
   }
+  if (!campaign.user) {
+    await markMailCampaignFailed(campaign.id, "User account not found.");
+    return;
+  }
   if (campaign.status === "CANCELLED") {
     return;
   }
@@ -858,6 +862,9 @@ export async function startMailCampaign(campaignId: string): Promise<{ accepted:
   if (!campaign) {
     return { accepted: false, reason: "Mail campaign not found" };
   }
+  if (!campaign.user) {
+    return { accepted: false, reason: "User account not found" };
+  }
   if (!campaign.user.sendingEmailEncrypted || !campaign.user.sendingAppPasswordEncrypted) {
     return { accepted: false, reason: "Save sending email and app password in Settings before sending mail campaigns." };
   }
@@ -1008,6 +1015,9 @@ export async function appendCampaignChatMessage(input: {
   });
   if (!campaign) {
     throw new Error("Mail campaign not found");
+  }
+  if (!campaign.user) {
+    throw new Error("User account not found");
   }
   const anchorRecipient = campaign.recipients[0];
   if (!anchorRecipient) {

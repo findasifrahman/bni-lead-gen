@@ -16,7 +16,7 @@ export type PublicUser = {
   headless: boolean;
 };
 
-export type LeadRequestStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+export type LeadRequestStatus = "COUNTING" | "AWAITING_APPROVAL" | "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export type MailCampaignStatus = "DRAFT" | "QUEUED" | "RUNNING" | "COMPLETED" | "CANCELLED" | "FAILED";
 export type MailRecipientStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
@@ -95,6 +95,7 @@ export type MailCampaign = {
   startedAt: string | null;
   completedAt: string | null;
   cancelledAt: string | null;
+  updatedAt?: string;
   recipients?: MailRecipient[];
   messages?: MailCampaignChatMessage[];
 };

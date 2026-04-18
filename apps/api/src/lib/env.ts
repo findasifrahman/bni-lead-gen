@@ -23,8 +23,8 @@ loadDotenv({ path: envPath, override: false });
 
 export const env = {
   databaseUrl: process.env.DATABASE_URL ?? "",
-  jwtSecret: process.env.JWT_SECRET ?? "replace-me",
-  encryptionKey: process.env.APP_ENCRYPTION_KEY ?? "replace-me",
+  jwtSecret: process.env.JWT_SECRET ?? "its-a-long-long-way-to-go",
+  encryptionKey: process.env.APP_ENCRYPTION_KEY ?? "78965432112345678998745632145698",
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
   apiPort: Number(process.env.API_PORT ?? "4000"),
   pythonBin: process.env.PYTHON_BIN ?? "python",
@@ -42,7 +42,7 @@ export const env = {
   r2PublicBaseUrl: process.env.R2_PUBLIC_BASE_URL ?? "",
   r2Endpoint: process.env.R2_ENDPOINT ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
-  openaiModelName: process.env.OPENAI_MODEL_NAME ?? "gpt-5.4-nano",
+  openaiModelName: process.env.OPENAI_MODEL_NAME ?? "gpt-4o-mini",
   zhipuApiBaseUrl: process.env.ZHIPU_API_BASE_URL ?? "https://open.bigmodel.cn/api/paas/v4",
   zhipuApiKey: process.env.ZHIPU_LLM_API_KEY ?? "",
   tavilyApiKey: process.env.TAVILY_API_KEY ?? "",

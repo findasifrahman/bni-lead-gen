@@ -29,9 +29,11 @@ type MailCampaignDetail = MailCampaign & { recipients?: MailRecipient[]; message
 type Props = {
   token: string;
   user: PublicUser;
+  senderEmail: string;
   leadRequests: LeadRequest[];
   campaigns: MailCampaign[];
   onRefresh: () => Promise<void>;
+  notify: (toast: { tone: "success" | "warning" | "danger" | "neutral"; title: string; message?: string }) => void;
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -75,6 +77,7 @@ function Icon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
     check: <path d="M9 16.2l-3.5-3.6L4 14.1l5 5 11-11-1.4-1.4z" />,
     close: <path d="M6.4 5l-.9.9L11.1 11l-5.6 5.6.9.9L12 11.9l5.6 5.6.9-.9L12.9 11 18.5 5.4l-.9-.9L12 10.1z" />,
+    search: <path d="M11 4a7 7 0 105.29 12.29l3.71 3.71 1.41-1.41-3.71-3.71A7 7 0 0011 4zm0 2a5 5 0 110 10 5 5 0 010-10z" />,
   };
   return (
     <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -147,7 +150,59 @@ function Badge({ tone, children }: { tone: "success" | "warning" | "danger" | "n
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
-export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }: Props) {
+function splitLines(value: string | null | undefined): string[] {
+  return (value ?? "").split(/\n/g);
+}
+
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`skeleton ${className}`.trim()} aria-hidden="true" />;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildRenderedEmailHtml(input: { senderEmail: string; subject: string; body: string }): string {
+  const paragraphs = splitLines(input.body)
+    .map((line) => `<p>${escapeHtml(line || "\u00a0")}</p>`)
+    .join("");
+  return `<!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>${escapeHtml(input.subject)}</title>
+      <style>
+        body{margin:0;padding:24px;background:#f6f8fc;font-family:Arial,Helvetica,sans-serif;color:#16233a}
+        .wrap{max-width:720px;margin:0 auto;background:#fff;border:1px solid #d9e4f7;border-radius:20px;overflow:hidden}
+        .head{padding:22px 24px;background:linear-gradient(135deg,#ff8a1f,#2563eb);color:#fff}
+        .head h1{margin:8px 0 0;font-size:22px;line-height:1.25}
+        .body{padding:24px;font-size:15px;line-height:1.75}
+        .body p{margin:0 0 14px}
+        .footer{margin-top:20px;padding-top:14px;border-top:1px solid #e6ecf7;color:#51607c}
+      </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <div class="head">
+          <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.9;">Professional outreach</div>
+          <h1>${escapeHtml(input.subject)}</h1>
+        </div>
+        <div class="body">
+          ${paragraphs}
+          <div class="footer">Best regards,<br />${escapeHtml(input.senderEmail)}</div>
+        </div>
+      </div>
+    </body>
+  </html>`;
+}
+
+export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns, onRefresh, notify }: Props) {
   const [mode, setMode] = useState<MailDraftMode>("GENERATED_LEADS");
   const [selectedLeadRequestId, setSelectedLeadRequestId] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -174,8 +229,18 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
   const [draftSaving, setDraftSaving] = useState(false);
   const [campaignPage, setCampaignPage] = useState(1);
   const [restoreNotice, setRestoreNotice] = useState("");
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [pendingStartCampaign, setPendingStartCampaign] = useState<{
+    campaignId: string;
+    recipientCount: number;
+    estimatedCredits: number;
+    fromEmail: string;
+    title: string;
+  } | null>(null);
   const campaignPageSize = 5;
   const hydratedCampaignId = useRef("");
+  const lastSavedDraftKey = useRef("");
   const isSendingCurrentCampaign = Boolean(
     campaignDetail && (loading || sendingCampaignId === campaignDetail.id)
   );
@@ -216,10 +281,16 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
       });
       setCampaignDetail(result.item);
       setSelectedCampaignId(campaignId);
-      setDraftSubject(result.item.draftSubject || result.item.messages?.find((message) => message.role === "ASSISTANT")?.draftSubject || "");
-      setDraftBody(result.item.draftBody || result.item.messages?.find((message) => message.role === "ASSISTANT")?.draftBody || "");
+      const nextSubject = result.item.draftSubject || result.item.messages?.find((message) => message.role === "ASSISTANT")?.draftSubject || "";
+      const nextBody = result.item.draftBody || result.item.messages?.find((message) => message.role === "ASSISTANT")?.draftBody || "";
+      setDraftSubject(nextSubject);
+      setDraftBody(nextBody);
+      lastSavedDraftKey.current = `${nextSubject}\n---\n${nextBody}`;
+      setDraftSavedAt(result.item.updatedAt || result.item.requestedAt || null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load campaign details");
+      const message = err instanceof Error ? err.message : "Unable to load campaign details";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to load campaign details", message });
       if (showLoading) {
         setCampaignDetail(null);
       }
@@ -244,9 +315,23 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
 
   useEffect(() => {
     if (!campaignDetail) return;
-    setDraftSubject(campaignDetail.draftSubject || campaignDetail.messages?.find((message) => message.role === "ASSISTANT")?.draftSubject || "");
-    setDraftBody(campaignDetail.draftBody || campaignDetail.messages?.find((message) => message.role === "ASSISTANT")?.draftBody || "");
+    const nextSubject = campaignDetail.draftSubject || campaignDetail.messages?.find((message) => message.role === "ASSISTANT")?.draftSubject || "";
+    const nextBody = campaignDetail.draftBody || campaignDetail.messages?.find((message) => message.role === "ASSISTANT")?.draftBody || "";
+    setDraftSubject(nextSubject);
+    setDraftBody(nextBody);
+    lastSavedDraftKey.current = `${nextSubject}\n---\n${nextBody}`;
+    setDraftSavedAt(campaignDetail.updatedAt || campaignDetail.requestedAt || null);
   }, [campaignDetail]);
+
+  useEffect(() => {
+    if (!campaignDetail || campaignDetail.status === "COMPLETED" || campaignDetail.status === "CANCELLED") return;
+    const timer = window.setInterval(() => {
+      const currentKey = `${draftSubject}\n---\n${draftBody}`;
+      if (currentKey === lastSavedDraftKey.current) return;
+      void saveDraft({ silent: true }).catch(() => undefined);
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [campaignDetail?.id, campaignDetail?.status, draftSubject, draftBody]);
 
   useEffect(() => {
     if (!selectedCampaignId || !campaignDetail) return;
@@ -282,6 +367,15 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
     setRestoreNotice("Restored from your last campaign.");
   }, [campaigns]);
 
+  useEffect(() => {
+    if (!restoreNotice) return;
+    notify({
+      tone: "neutral",
+      title: "Composer restored",
+      message: restoreNotice,
+    });
+  }, [notify, restoreNotice]);
+
   const validateAndDraft = async (event: FormEvent) => {
     event.preventDefault();
     setLoading(true);
@@ -316,55 +410,69 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
       });
       setPreview(result);
       setMessage(result.message);
+      notify({ tone: "success", title: "Campaign validated", message: result.message });
       await onRefresh();
       await openCampaignDetail(result.campaign.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to validate campaign");
+      const message = err instanceof Error ? err.message : "Unable to validate campaign";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to validate campaign", message });
     } finally {
       setLoading(false);
     }
   };
 
-  const startCampaign = async () => {
-    if (!preview?.campaign?.id) return;
+  const startCampaignNow = async (campaignId: string) => {
     setLoading(true);
-    setError("");
-    try {
-      await apiRequest<{ message: string }>(`/api/mail-campaigns/${preview.campaign.id}/start`, {
-        method: "POST",
-        token,
-      });
-      setMessage("Mail campaign queued.");
-      await onRefresh();
-      await refreshCampaignDetail(preview.campaign.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start mail campaign");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startExistingCampaign = async (campaignId: string) => {
-    setSendingCampaignId(campaignId);
     setError("");
     try {
       await apiRequest<{ message: string }>(`/api/mail-campaigns/${campaignId}/start`, {
         method: "POST",
         token,
       });
+      setMessage("Mail campaign queued.");
+      notify({ tone: "success", title: "Mail campaign queued", message: "The campaign has been sent to the worker queue." });
+      setPendingStartCampaign(null);
       await onRefresh();
       await refreshCampaignDetail(campaignId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to start mail campaign");
+      const message = err instanceof Error ? err.message : "Unable to start mail campaign";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to start mail campaign", message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmStartCampaign = async () => {
+    if (!pendingStartCampaign) return;
+    const campaignId = pendingStartCampaign.campaignId;
+    setSendingCampaignId(campaignId);
+    try {
+      await startCampaignNow(campaignId);
     } finally {
       setSendingCampaignId("");
     }
   };
 
-  const saveDraft = async () => {
+  const promptStartCampaign = (campaignId: string, recipientCount: number, estimatedCredits: number, title: string) => {
+    setPendingStartCampaign({
+      campaignId,
+      recipientCount,
+      estimatedCredits,
+      fromEmail: senderEmail || user.email,
+      title,
+    });
+  };
+
+  const saveDraft = async (options: { silent?: boolean } = {}) => {
     if (!campaignDetail) return;
+    const currentKey = `${draftSubject}\n---\n${draftBody}`;
+    if (!options.silent && lastSavedDraftKey.current === currentKey) {
+      setDraftSavedAt(campaignDetail.updatedAt || new Date().toISOString());
+      return;
+    }
     setDraftSaving(true);
-    setError("");
     try {
       const result = await apiRequest<{ item: MailCampaignDetail }>(`/api/mail-campaigns/${campaignDetail.id}/draft`, {
         method: "PATCH",
@@ -377,9 +485,16 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
       setCampaignDetail(result.item);
       setPreview((current) => (current && current.campaign.id === result.item.id ? { ...current, campaign: result.item } : current));
       await onRefresh();
-      setMessage("Draft saved.");
+      lastSavedDraftKey.current = currentKey;
+      setDraftSavedAt(result.item.updatedAt || new Date().toISOString());
+      if (!options.silent) {
+        setMessage("Draft saved.");
+        notify({ tone: "success", title: "Draft saved", message: "Your changes have been stored." });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save draft");
+      const message = err instanceof Error ? err.message : "Unable to save draft";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to save draft", message });
     } finally {
       setDraftSaving(false);
     }
@@ -404,8 +519,11 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
       setChatPrompt("");
       await onRefresh();
       setMessage("Draft updated by AI.");
+      notify({ tone: "success", title: "Draft updated by AI", message: "The assistant revised the subject and body." });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update draft");
+      const message = err instanceof Error ? err.message : "Unable to update draft";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to update draft", message });
     } finally {
       setChatSending(false);
     }
@@ -426,8 +544,11 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
         closeCampaignDetail();
       }
       setMessage("Campaign deleted.");
+      notify({ tone: "success", title: "Campaign deleted", message: "The campaign and its source file were removed." });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to delete campaign");
+      const message = err instanceof Error ? err.message : "Unable to delete campaign";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to delete campaign", message });
     } finally {
       setLoading(false);
     }
@@ -445,8 +566,11 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
       if (preview?.campaign?.id === campaignId) {
         setPreview(null);
       }
+      notify({ tone: "warning", title: "Campaign cancelled", message: "The campaign stopped before continuing." });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to cancel mail campaign");
+      const message = err instanceof Error ? err.message : "Unable to cancel mail campaign";
+      setError(message);
+      notify({ tone: "danger", title: "Unable to cancel mail campaign", message });
     } finally {
       setLoading(false);
     }
@@ -525,17 +649,14 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
 
           <div className="action-row" style={{ gridColumn: "1 / -1" }}>
             <Button variant="secondary" type="submit" disabled={loading}>
-              Validate & Estimate
+              {loading ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="search" />}{" "}
+              {loading ? "Validating..." : "Validate & Estimate"}
             </Button>
             <Button variant="ghost" type="button" disabled={loading} onClick={resetDraft}>
               Reset
             </Button>
           </div>
         </form>
-
-        {message && <div className="alert alert-success">{message}</div>}
-        {error && <div className="alert alert-error">{error}</div>}
-        {restoreNotice && !message && !error && <div className="alert alert-info">{restoreNotice}</div>}
 
         {preview && (
           <div className="empty-state-card warning" style={{ marginTop: 18, alignItems: "flex-start" }}>
@@ -547,12 +668,26 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
               <p>{preview.serviceSummary}</p>
             </div>
             <div className="action-row">
-              <Button variant="primary" disabled={loading} onClick={startCampaign}>
+              <Button
+                variant="primary"
+                disabled={loading}
+                onClick={() =>
+                  promptStartCampaign(
+                    preview.campaign.id,
+                    preview.validRecipients,
+                    preview.estimatedCredits,
+                    describeCampaignSource(preview.campaign.sourceType, preview.campaign.inputFileName)
+                  )
+                }
+              >
                 {loading ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="check" />}{" "}
                 Send emails
               </Button>
               <Button variant="ghost" disabled={loading} onClick={() => setPreview(null)}>
                 Back
+              </Button>
+              <Button variant="ghost" disabled={loading} onClick={() => setPreviewModalOpen(true)}>
+                Preview HTML
               </Button>
             </div>
           </div>
@@ -571,7 +706,7 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
               </div>
             </div>
             <div className="draft-preview-body">
-              {preview.draftEmail.body.split(/\n/g).map((line, index) => (
+              {splitLines(preview.draftEmail.body).map((line, index) => (
                 <p key={`${line}-${index}`}>{line || "\u00a0"}</p>
               ))}
             </div>
@@ -596,7 +731,7 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
         )}
 
         {preview?.invalidRows?.length ? (
-          <div className="alert alert-error" style={{ marginTop: 14 }}>
+          <div className="empty-state-card warning" style={{ marginTop: 14, alignItems: "flex-start" }}>
             {preview.invalidRows.map((row) => (
               <div key={row.rowIndex}>
                 {row.sourceLabel ? `${row.sourceLabel} ` : ""}Row {row.rowIndex}: {row.reason}
@@ -604,6 +739,106 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
             ))}
           </div>
         ) : null}
+
+        {(previewModalOpen || pendingStartCampaign) && (
+          <div className="modal-backdrop" role="presentation" onClick={() => {
+            if (previewModalOpen) setPreviewModalOpen(false);
+            if (pendingStartCampaign) setPendingStartCampaign(null);
+          }}>
+            <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              {previewModalOpen ? (
+                <>
+                  <div className="modal-head">
+                    <div>
+                      <span className="draft-preview-label">Rendered email preview</span>
+                      <h3>{draftSubject || preview?.draftEmail?.subject || "Email preview"}</h3>
+                      <p>This shows the email as rendered HTML before you send it.</p>
+                    </div>
+                    <Button variant="ghost" onClick={() => setPreviewModalOpen(false)}>
+                      Close
+                    </Button>
+                  </div>
+                  <iframe
+                    className="email-preview-frame"
+                    title="Rendered email preview"
+                    srcDoc={buildRenderedEmailHtml({
+                      senderEmail,
+                      subject: draftSubject || preview?.draftEmail?.subject || "Email preview",
+                      body: draftBody || preview?.draftEmail?.body || "",
+                    })}
+                  />
+                </>
+              ) : (
+                pendingStartCampaign && (
+                  <>
+                    <div className="modal-head">
+                      <div>
+                        <span className="draft-preview-label">Confirm send</span>
+                        <h3>{pendingStartCampaign.title}</h3>
+                        <p>One more click will queue this campaign.</p>
+                      </div>
+                      <Button variant="ghost" onClick={() => setPendingStartCampaign(null)}>
+                        Close
+                      </Button>
+                    </div>
+                    <div className="modal-body">
+                      <div className="confirmation-grid">
+                        <div>
+                          <span className="field-hint">Recipients</span>
+                          <strong>{currencyLike(pendingStartCampaign.recipientCount)}</strong>
+                        </div>
+                        <div>
+                          <span className="field-hint">Estimated credits</span>
+                          <strong>{currencyLike(pendingStartCampaign.estimatedCredits)}</strong>
+                        </div>
+                        <div>
+                          <span className="field-hint">From</span>
+                          <strong>{pendingStartCampaign.fromEmail}</strong>
+                        </div>
+                      </div>
+                      <div className="action-row">
+                        <Button variant="primary" disabled={loading || sendingCampaignId === pendingStartCampaign.campaignId} onClick={() => void confirmStartCampaign()}>
+                          {(loading || sendingCampaignId === pendingStartCampaign.campaignId) ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="check" />}{" "}
+                          Confirm send
+                        </Button>
+                        <Button variant="ghost" onClick={() => setPendingStartCampaign(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
+        {campaignDetailLoading && !campaignDetail && (
+          <section className="mail-gpt-shell">
+            <aside className="mail-gpt-sidebar">
+              <Skeleton className="skeleton-line short" />
+              <Skeleton className="skeleton-line" />
+              <Skeleton className="skeleton-line" />
+              <div className="chat-thread-list">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={index} className="skeleton-thread-card">
+                    <Skeleton className="skeleton-line short" />
+                    <Skeleton className="skeleton-line" />
+                    <Skeleton className="skeleton-line short" />
+                  </div>
+                ))}
+              </div>
+            </aside>
+            <main className="mail-gpt-main">
+              <div className="draft-preview">
+                <Skeleton className="skeleton-line short" />
+                <Skeleton className="skeleton-line long" />
+                <Skeleton className="skeleton-line" />
+                <Skeleton className="skeleton-block large" />
+              </div>
+            </main>
+          </section>
+        )}
 
         {campaignDetail && (
           <section className="mail-gpt-shell">
@@ -648,16 +883,35 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
                   <Button variant="secondary" disabled={draftSaving} onClick={() => void saveDraft()}>
                     Save draft
                   </Button>
-                  <Button variant="primary" disabled={isSendingCurrentCampaign} onClick={() => void startExistingCampaign(campaignDetail.id)}>
+                  <Button
+                    variant="primary"
+                    disabled={isSendingCurrentCampaign}
+                    onClick={() =>
+                      promptStartCampaign(
+                        campaignDetail.id,
+                        campaignDetail.totalRecipients,
+                        campaignDetail.totalRecipients * 4,
+                        describeCampaignSource(campaignDetail.sourceType, campaignDetail.inputFileName)
+                      )
+                    }
+                  >
                     {isSendingCurrentCampaign ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="check" />}{" "}
                     {isSendingCurrentCampaign ? "Sending..." : "Send emails"}
                   </Button>
+                  {(campaignDetail.status === "QUEUED" || campaignDetail.status === "RUNNING") && (
+                    <Button variant="danger" disabled={loading} onClick={() => void cancelCampaign(campaignDetail.id)}>
+                      Cancel
+                    </Button>
+                  )}
                 </div>
               </div>
 
               <section className="draft-editor">
                 <Field label="Subject">
-                  <input className="input" value={draftSubject} onChange={(event) => setDraftSubject(event.target.value)} />
+                  <div className="field-stack">
+                    <input className="input" value={draftSubject} onChange={(event) => setDraftSubject(event.target.value)} />
+                    <span className="field-hint">{draftSubject.length}/70 characters</span>
+                  </div>
                 </Field>
                 <Field label="Body">
                   <textarea
@@ -666,6 +920,11 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
                     onChange={(event) => setDraftBody(event.target.value)}
                   />
                 </Field>
+                <div className="action-row">
+                  <Button variant="ghost" disabled={draftSaving} onClick={() => setPreviewModalOpen(true)}>
+                    Preview HTML
+                  </Button>
+                </div>
               </section>
 
               <section className="chat-thread">
@@ -687,7 +946,7 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
                                 <strong>Subject:</strong> {message.draftSubject || "-"}
                               </p>
                               <div className="chat-body-copy">
-                                {(message.draftBody || message.content).split(/\n/g).map((line, index) => (
+                                {splitLines(message.draftBody || message.content || "").map((line, index) => (
                                   <p key={`${message.id}-${index}`}>{line || "\u00a0"}</p>
                                 ))}
                               </div>
@@ -790,7 +1049,14 @@ export function SendMailTab({ token, user, leadRequests, campaigns, onRefresh }:
                           <Button
                             variant="secondary"
                             disabled={loading || sendingCampaignId === campaign.id}
-                            onClick={() => void startExistingCampaign(campaign.id)}
+                            onClick={() =>
+                              promptStartCampaign(
+                                campaign.id,
+                                campaign.totalRecipients,
+                                campaign.totalRecipients * 4,
+                                describeCampaignSource(campaign.sourceType, campaign.inputFileName)
+                              )
+                            }
                           >
                             {campaign.status === "FAILED" ? "Resume" : "Start"}
                           </Button>

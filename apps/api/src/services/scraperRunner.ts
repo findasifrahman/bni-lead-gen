@@ -398,6 +398,7 @@ async function loadScraperCredentials(requestId: string): Promise<ScraperCredent
     include: { user: true },
   });
   if (!request) return null;
+  if (!request.user) return null;
   const username = request.user.bniUsername?.trim() ?? "";
   const password = decryptSecret(request.user.bniPasswordEncrypted ?? "");
   if (!username || !password) return null;
