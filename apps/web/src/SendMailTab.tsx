@@ -73,6 +73,61 @@ function describeCampaignSource(sourceType: MailCampaign["sourceType"], inputFil
   }
 }
 
+function deriveSenderDisplayName(senderEmail: string) {
+  const trimmed = senderEmail.trim();
+  if (!trimmed) {
+    return "Sending email not configured";
+  }
+  const localPart = trimmed.split("@")[0]?.trim() || "";
+  const genericLocalParts = new Set(["info", "hello", "support", "sales", "contact", "office", "team", "admin", "mail", "noreply", "no-reply"]);
+  if (!localPart || genericLocalParts.has(localPart.toLowerCase())) {
+    const domain = trimmed.split("@")[1]?.split(".")[0]?.trim() || "";
+    if (domain) {
+      return domain
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+    }
+  }
+  return localPart
+    .replace(/[._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase()) || senderEmail;
+}
+
+function extractCampaignSenderLabel(campaign: MailCampaign, senderEmail: string) {
+  const summary = campaign.serviceSummary ?? "";
+  const labelFromSummary =
+    summary.match(/(?:^|\n)\s*Title:\s*([^\n|]+)/i)?.[1]?.trim() ||
+    summary.match(/(?:^|\n)\s*Name:\s*([^\n|]+)/i)?.[1]?.trim() ||
+    summary.match(/(?:^|\n)\s*Company:\s*([^\n|]+)/i)?.[1]?.trim();
+  if (labelFromSummary) {
+    return labelFromSummary;
+  }
+
+  const websites = [campaign.companyWebsitePrimary, campaign.companyWebsiteSecondary, campaign.companyWebsiteTertiary ?? ""].filter(Boolean);
+  for (const website of websites) {
+    try {
+      const host = new URL(website).hostname.replace(/^www\./i, "");
+      const local = host.split(".")[0] ?? "";
+      const branded = local
+        .replace(/[-_]+/g, " ")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (branded) {
+        return branded.replace(/\b\w/g, (char) => char.toUpperCase());
+      }
+    } catch {
+      // Ignore invalid URLs and keep falling back.
+    }
+  }
+
+  return senderEmail.trim() ? deriveSenderDisplayName(senderEmail) : "Sending email not configured";
+}
+
 function Icon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
     check: <path d="M9 16.2l-3.5-3.6L4 14.1l5 5 11-11-1.4-1.4z" />,
@@ -167,7 +222,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function buildRenderedEmailHtml(input: { senderEmail: string; subject: string; body: string }): string {
+function buildRenderedEmailHtml(input: { senderName: string; senderEmail: string; subject: string; body: string }): string {
   const paragraphs = splitLines(input.body)
     .map((line) => `<p>${escapeHtml(line || "\u00a0")}</p>`)
     .join("");
@@ -185,6 +240,8 @@ function buildRenderedEmailHtml(input: { senderEmail: string; subject: string; b
         .body{padding:24px;font-size:15px;line-height:1.75}
         .body p{margin:0 0 14px}
         .footer{margin-top:20px;padding-top:14px;border-top:1px solid #e6ecf7;color:#51607c}
+        .footer strong{display:block;color:#16233a;font-size:15px;margin-bottom:2px}
+        .footer span{display:block;font-size:13px}
       </style>
     </head>
     <body>
@@ -195,7 +252,11 @@ function buildRenderedEmailHtml(input: { senderEmail: string; subject: string; b
         </div>
         <div class="body">
           ${paragraphs}
-          <div class="footer">Best regards,<br />${escapeHtml(input.senderEmail)}</div>
+          <div class="footer">
+            <strong>Best regards,</strong>
+            <span>${escapeHtml(input.senderName)}</span>
+            <span>${escapeHtml(input.senderEmail)}</span>
+          </div>
         </div>
       </div>
     </body>
@@ -235,6 +296,7 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
     campaignId: string;
     recipientCount: number;
     estimatedCredits: number;
+    fromLabel: string;
     fromEmail: string;
     title: string;
   } | null>(null);
@@ -458,12 +520,14 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
     }
   };
 
-  const promptStartCampaign = (campaignId: string, recipientCount: number, estimatedCredits: number, title: string) => {
+  const promptStartCampaign = (campaign: MailCampaign, recipientCount: number, estimatedCredits: number, title: string) => {
+    const senderAddress = senderEmail.trim();
     setPendingStartCampaign({
-      campaignId,
+      campaignId: campaign.id,
       recipientCount,
       estimatedCredits,
-      fromEmail: senderEmail || user.email,
+      fromLabel: extractCampaignSenderLabel(campaign, senderAddress),
+      fromEmail: senderAddress || "Sending email not configured",
       title,
     });
   };
@@ -608,7 +672,7 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
           ) : null}
 
           {(mode === "CUSTOM_UPLOAD" || mode === "COMBINED") ? (
-            <Field label="Upload CSV or Excel" hint="Required columns: name, company, email, website, city, country, professional_details">
+            <Field label="Upload CSV or Excel" hint="Required: email. Other columns like name, company, website, city, country, phone, and professional details are optional.">
               <input
                 className="input"
                 type="file"
@@ -676,7 +740,7 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
                 disabled={loading}
                 onClick={() =>
                   promptStartCampaign(
-                    preview.campaign.id,
+                    preview.campaign,
                     preview.validRecipients,
                     preview.estimatedCredits,
                     describeCampaignSource(preview.campaign.sourceType, preview.campaign.inputFileName)
@@ -765,7 +829,11 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
                     className="email-preview-frame"
                     title="Rendered email preview"
                     srcDoc={buildRenderedEmailHtml({
-                      senderEmail,
+                      senderName: extractCampaignSenderLabel(
+                        preview?.campaign ?? (campaignDetail as MailCampaign),
+                        senderEmail.trim()
+                      ),
+                      senderEmail: senderEmail.trim() || "Sending email not configured",
                       subject: draftSubject || preview?.draftEmail?.subject || "Email preview",
                       body: draftBody || preview?.draftEmail?.body || "",
                     })}
@@ -796,7 +864,8 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
                         </div>
                         <div>
                           <span className="field-hint">From</span>
-                          <strong>{pendingStartCampaign.fromEmail}</strong>
+                          <strong>{pendingStartCampaign.fromLabel}</strong>
+                          <span className="field-hint">{pendingStartCampaign.fromEmail}</span>
                         </div>
                       </div>
                       <div className="action-row">
@@ -891,7 +960,7 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
                     disabled={isSendingCurrentCampaign}
                     onClick={() =>
                       promptStartCampaign(
-                        campaignDetail.id,
+                        campaignDetail,
                         campaignDetail.totalRecipients,
                         campaignDetail.totalRecipients * 4,
                         describeCampaignSource(campaignDetail.sourceType, campaignDetail.inputFileName)
@@ -1054,7 +1123,7 @@ export function SendMailTab({ token, user, senderEmail, leadRequests, campaigns,
                             disabled={loading || sendingCampaignId === campaign.id}
                             onClick={() =>
                               promptStartCampaign(
-                                campaign.id,
+                                campaign,
                                 campaign.totalRecipients,
                                 campaign.totalRecipients * 4,
                                 describeCampaignSource(campaign.sourceType, campaign.inputFileName)

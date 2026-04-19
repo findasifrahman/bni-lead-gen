@@ -71,7 +71,7 @@ type Job = {
   campaignId: string;
 };
 
-const REQUIRED_COLUMNS = ["name", "company", "email", "website", "city", "country", "professional_details"] as const;
+const REQUIRED_COLUMNS = ["email"] as const;
 const pendingJobs: Job[] = [];
 const activeCampaigns = new Set<string>();
 let pumpRunning = false;
@@ -253,9 +253,6 @@ function validateMailRows(
         invalidRows.push({ rowIndex: index + 1, reason: `Missing required fields: ${missing.join(", ")}` });
         return;
       }
-    } else if (!normalizeCell(row.name).length) {
-      invalidRows.push({ rowIndex: index + 1, reason: "Missing recipient name" });
-      return;
     }
     validRows.push(row);
   });

@@ -964,7 +964,7 @@ export function DashboardShell({ token, user, onLogout }: DashboardShellProps) {
           <SendMailTab
             token={token}
             user={summary?.user ?? user}
-            senderEmail={settings?.sendingEmail || summary?.user.email || user.email}
+            senderEmail={settings?.sendingEmail ?? ""}
             leadRequests={leadRequests}
             campaigns={mailCampaigns}
             onRefresh={loadMailCampaigns}
@@ -1083,6 +1083,30 @@ function HomeTab({
   const isFiltering = preflightLoading || submitting;
   const leadProgress = currentLeadRequest ? leadProgressPercent(currentLeadRequest) : 0;
   const completionNoticeShown = useRef("");
+  const activeRequestSeenRef = useRef<string | null>(null);
+  const [recentCompletionRequest, setRecentCompletionRequest] = useState<LeadRequest | null>(null);
+  const [recentCompletionSignature, setRecentCompletionSignature] = useState("");
+  const currentFilterSignature = [keywordTrimmed, countryTrimmed, categoryTrimmed].map((part) => part.trim()).join("|");
+  const requestSignature = (request: LeadRequest) =>
+    [request.keyword?.trim() ?? "", request.country.trim(), request.category?.trim() ?? ""].join("|");
+  const showCompletionCard = Boolean(
+    recentCompletionRequest &&
+      recentCompletionRequest.status === "COMPLETED" &&
+      recentCompletionRequest.totalLeads > 0 &&
+      recentCompletionSignature === currentFilterSignature &&
+      !currentLeadRequest &&
+      !isFiltering
+  );
+
+  useEffect(() => {
+    if (currentLeadRequest) {
+      activeRequestSeenRef.current = currentLeadRequest.id;
+      if (currentLeadRequest.status !== "COMPLETED") {
+        setRecentCompletionRequest(null);
+        setRecentCompletionSignature("");
+      }
+    }
+  }, [currentLeadRequest]);
 
   useEffect(() => {
     if (!visibleRequest) return;
@@ -1099,7 +1123,11 @@ function HomeTab({
     }
     if (visibleRequest.status === "COMPLETED" && visibleRequest.totalLeads > 0) {
       const signature = `${visibleRequest.id}:${visibleRequest.totalLeads}:${visibleRequest.completedAt ?? ""}`;
-      if (completionNoticeShown.current !== signature) {
+      if (activeRequestSeenRef.current === visibleRequest.id) {
+        setRecentCompletionRequest(visibleRequest);
+        setRecentCompletionSignature(requestSignature(visibleRequest));
+      }
+      if (completionNoticeShown.current !== signature && activeRequestSeenRef.current === visibleRequest.id) {
         completionNoticeShown.current = signature;
         notify({
           tone: "success",
@@ -1242,7 +1270,7 @@ function HomeTab({
         </div>
       </Card>
 
-        <Card title="Lead generator" subtitle="Use the same filters as BNI Connect." icon="filter">
+        <Card title="Lead generator" subtitle="Use the same filters as BNI Connect.Dont refresh The browser while lead is generating" icon="filter">
         {!hasBniCredentials && (
           <div className="empty-state-card warning" style={{ marginBottom: 16, alignItems: "flex-start" }}>
             <div>
@@ -1344,7 +1372,23 @@ function HomeTab({
           </div>
         )}
 
-        {visibleRequest && visibleRequest.status === "COMPLETED" && visibleRequest.totalLeads > 0 && (
+        {isFiltering && !currentLeadRequest && (
+          <div className="empty-state-card loading-state">
+            <div>
+              <strong>{preflightLoading ? "Filtering profiles..." : "Starting lead generation..."}</strong>
+              <p>
+                {preflightLoading
+                  ? "We are estimating matches and reserving the right credits. Do not refresh browser"
+                  : "The job is being queued and will begin shortly."}
+              </p>
+            </div>
+            <div className="loading-bar" aria-hidden="true">
+              <span />
+            </div>
+          </div>
+        )}
+
+        {showCompletionCard && recentCompletionRequest && (
           <div className="empty-state-card success complete-callout">
             <div>
               <strong>Lead generation completed</strong>
@@ -1356,7 +1400,7 @@ function HomeTab({
               </Button>
               <Button
                 variant="ghost"
-                onClick={() => void onDownloadLead(visibleRequest)}
+                onClick={() => void onDownloadLead(recentCompletionRequest)}
               >
                 <Icon name="download" /> Download CSV
               </Button>
